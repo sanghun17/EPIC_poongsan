@@ -11,29 +11,31 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      - name: Checkout Repository
+      # 1. 코드를 catkin_ws/src 폴더 안에 내려받도록 경로 지정
+      - name: Checkout Repository into catkin_ws/src
         uses: actions/checkout@v4
+        with:
+          path: catkin_ws/src
 
-      # 2. NXP Yocto SDK 환경 설정 스크립트 실행
+      # 2. Yocto SDK 환경 설정 (변경 없음)
       - name: Setup Yocto SDK Environment
         run: |
-          echo "Unsetting LD_LIBRARY_PATH to avoid conflicts..."
-          unset LD_LIBRARY_PATH # <--- 바로 이 한 줄을 추가해주세요!
-          
-          echo "Sourcing the NXP Yocto SDK environment script..."
+          unset LD_LIBRARY_PATH
           source /opt/nxp-real-time-edge/2.5/environment-setup-armv8a-poky-linux
-          # 환경이 잘 로드되었는지 컴파일러 버전 출력으로 확인
           echo "Compiler version: $($CC --version)"
 
-      # 3. catkin_make를 사용하여 ROS 워크스페이스 빌드
+      # 3. catkin_make를 catkin_ws 폴더에서 실행하도록 작업 디렉토리 변경
       - name: Build ROS Catkin Workspace
+        working-directory: catkin_ws
         run: |
-          echo "Building the workspace with catkin_make..."
+          echo "Building the workspace from $(pwd)..."
+          # toolchain.cmake 파일의 경로가 src/ 아래에 있으므로 그대로 사용
           catkin_make -DCMAKE_TOOLCHAIN_FILE=src/toolchain.cmake
 
-      # 4. 생성된 모든 실행 파일을 하나의 아티팩트로 압축하여 업로드
+      # 4. 결과물 업로드 경로 수정
       - name: Upload Executable Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ros-nodes-binary
-          path: devel/lib/
+          # 결과물이 생성되는 경로를 catkin_ws 기준으로 수정
+          path: catkin_ws/devel/lib/
