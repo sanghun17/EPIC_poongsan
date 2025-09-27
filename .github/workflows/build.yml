@@ -15,18 +15,11 @@ jobs:
         with:
           path: catkin_ws/src
 
-      # 2. 빌드 의존성 설치 (ROS catkin 빌드에 필요한 python3-empy 등)
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-empy python3-pip python3-setuptools
-
-      # 3. ROS 및 Yocto SDK 환경 설정
+      # 2. ROS 및 Yocto SDK 환경 설정
       - name: Setup Build Environment
         run: |
           echo "Sourcing ROS and exporting variables to next steps"
           source /opt/ros/noetic/setup.bash
-          # catkin_make가 필요한 핵심 환경 변수들을 GITHUB_ENV 파일에 기록
           echo "CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}" >> $GITHUB_ENV
           echo "ROS_PACKAGE_PATH=${ROS_PACKAGE_PATH}" >> $GITHUB_ENV
 
@@ -38,16 +31,14 @@ jobs:
           
           echo "Compiler version: $($CC --version)"
 
-      # 4. catkin_make 빌드 (Python3 지정 + toolchain 사용)
+      # 3. catkin_make를 올바른 경로와 올바른 toolchain 경로로 실행
       - name: Build ROS Catkin Workspace
         working-directory: catkin_ws
         run: |
           echo "Building the workspace from $(pwd)..."
-          catkin_make \
-            -DPYTHON_EXECUTABLE=/usr/bin/python3 \
-            -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/catkin_ws/src/toolchain.cmake
+          catkin_make -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/catkin_ws/src/toolchain.cmake
 
-      # 5. 결과물 업로드
+      # 4. 결과물 업로드
       - name: Upload Executable Artifacts
         uses: actions/upload-artifact@v4
         with:
