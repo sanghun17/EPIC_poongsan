@@ -17,25 +17,25 @@ jobs:
         with:
           path: catkin_ws/src
 
-      # 2. Yocto SDK 환경 설정 (변경 없음)
+      # 2. Yocto SDK 환경 설정
       - name: Setup Yocto SDK Environment
         run: |
           unset LD_LIBRARY_PATH
           source /opt/nxp-real-time-edge/2.5/environment-setup-armv8a-poky-linux
           echo "Compiler version: $($CC --version)"
 
-      # 3. catkin_make를 catkin_ws 폴더에서 실행하도록 작업 디렉토리 변경
+      # 3. catkin_make를 올바른 경로와 올바른 toolchain 경로로 실행
       - name: Build ROS Catkin Workspace
         working-directory: catkin_ws
         run: |
           echo "Building the workspace from $(pwd)..."
-          # toolchain.cmake 파일의 경로가 src/ 아래에 있으므로 그대로 사용
-          catkin_make -DCMAKE_TOOLCHAIN_FILE=src/toolchain.cmake
+          # toolchain.cmake 파일이 저장소에 포함되어 있으므로,
+          # $GITHUB_WORKSPACE 변수를 사용해 절대 경로를 지정합니다.
+          catkin_make -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/catkin_ws/src/toolchain.cmake
 
-      # 4. 결과물 업로드 경로 수정
+      # 4. 결과물 업로드
       - name: Upload Executable Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ros-nodes-binary
-          # 결과물이 생성되는 경로를 catkin_ws 기준으로 수정
           path: catkin_ws/devel/lib/
