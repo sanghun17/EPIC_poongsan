@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# EPIC Exploration Algorithm Runner for Host PC (Pre-deployment Testing)
+# EPIc Exploration Algorithm Runner for Host PC (Pre-deployment Testing)
 # This script sets up the environment and runs the core exploration algorithm on host PC
 #
 # Usage:
