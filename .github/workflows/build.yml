@@ -20,8 +20,11 @@ jobs:
       # 2. ROS 및 Yocto SDK 환경 설정
       - name: Setup Build Environment
         run: |
-          echo "Sourcing ROS environment...."
+          echo "Sourcing ROS and exporting variables to next steps"
           source /opt/ros/noetic/setup.bash
+          # catkin_make가 필요한 핵심 환경 변수들을 GITHUB_ENV 파일에 기록하여 다음 단계로 전달합니다.
+          echo "CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}" >> $GITHUB_ENV
+          echo "ROS_PACKAGE_PATH=${ROS_PACKAGE_PATH}" >> $GITHUB_ENV
 
           echo "Unsetting LD_LIBRARY_PATH to avoid conflicts..."
           unset LD_LIBRARY_PATH
