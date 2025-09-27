@@ -1,0 +1,46 @@
+# .github/workflows/build.yml
+
+# 워크플로우 이름
+name: ROS Cross-Compile for NXP Edge
+
+# 언제 이 워크플로우를 실행할지 정의
+on:
+  # main 브랜치에 코드가 push 되었을 때 실행
+  push:
+    branches: [ "main" ]
+
+# 수행할 작업 정의
+jobs:
+  build-ros-workspace:
+    # 이 작업은 등록된 'self-hosted' 러너에서 실행
+    runs-on: self-hosted
+
+    # 작업 단계들
+    steps:
+      # 1. 저장소의 최신 코드를 빌드 서버로 가져옴 (필수)
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 2. NXP Yocto SDK 환경 설정 스크립트 실행
+      - name: Setup Yocto SDK Environment
+        run: |
+          echo "Sourcing the NXP Yocto SDK environment script..."
+          source /opt/nxp-real-time-edge/2.5/environment-setup-armv8a-poky-linux
+          # 환경이 잘 로드되었는지 컴파일러 버전 출력으로 확인
+          echo "Compiler version: $($CC --version)"
+
+      # 3. catkin_make를 사용하여 ROS 워크스페이스 빌드
+      - name: Build ROS Catkin Workspace
+        run: |
+          echo "Building the workspace with catkin_make..."
+          catkin_make -DCMAKE_TOOLCHAIN_FILE=src/toolchain.cmake
+
+      # 4. 생성된 모든 실행 파일을 하나의 아티팩트로 압축하여 업로드
+      - name: Upload Executable Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          # GitHub에 표시될 아티팩트의 이름
+          name: ros-nodes-binary
+          # 업로드할 파일들이 있는 경로
+          # devel/lib 폴더 아래의 모든 결과물을 업로드합니다.
+          path: devel/lib/
