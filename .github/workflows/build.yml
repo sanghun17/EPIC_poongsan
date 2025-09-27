@@ -24,7 +24,8 @@ jobs:
       # 2. NXP Yocto SDK 환경 설정 스크립트 실행
       - name: Setup Yocto SDK Environment
         run: |
-          echo "Sourcing the NXP Yocto SDK environment script..."
+          unset LD_LIBRARY_PATH
+	  echo "Sourcing the NXP Yocto SDK environment script..."
           source /opt/nxp-real-time-edge/2.5/environment-setup-armv8a-poky-linux
           # 환경이 잘 로드되었는지 컴파일러 버전 출력으로 확인
           echo "Compiler version: $($CC --version)"
