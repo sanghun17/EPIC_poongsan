@@ -9,13 +9,11 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      # 1. 코드를 catkin_ws/src 폴더 안에 내려받도록 경로 지정
       - name: Checkout Repository into catkin_ws/src
         uses: actions/checkout@v4
         with:
           path: catkin_ws/src
 
-      # 2. ROS 및 Yocto SDK 환경 설정
       - name: Setup Build Environment
         run: |
           echo "Sourcing ROS and exporting variables to next steps"
@@ -31,14 +29,16 @@ jobs:
           
           echo "Compiler version: $($CC --version)"
 
-      # 3. catkin_make를 올바른 경로와 올바른 toolchain 경로로 실행
       - name: Build ROS Catkin Workspace
         working-directory: catkin_ws
+        env:
+          PYTHON_EXECUTABLE: /usr/bin/python3
         run: |
           echo "Building the workspace from $(pwd)..."
-          catkin_make -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/catkin_ws/src/toolchain.cmake
+          catkin_make \
+            -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+            -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/catkin_ws/src/toolchain.cmake
 
-      # 4. 결과물 업로드
       - name: Upload Executable Artifacts
         uses: actions/upload-artifact@v4
         with:
