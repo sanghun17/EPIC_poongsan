@@ -74,11 +74,14 @@ void FastPlannerManager::initPlanModules(
   fast_searcher_.reset(new FastSearcher);
   fast_searcher_->init(topo_graph_, bubble_path_finder_);
 
-  pos_sub = nh.subscribe("/quad_0/lidar_slam/odom", 10,
+  string odom_topic;
+  nh.param("odometry_topic", odom_topic, string("/aft_mapped_to_init"));
+
+  pos_sub = nh.subscribe(odom_topic, 10,
                          &FastPlannerManager::posCallback, this);
   goal_sub = nh.subscribe("/move_base_simple/goal", 10,
                           &FastPlannerManager::goalCallback, this);
-  yaw_state_pub = nh.advertise<std_msgs::Int32>("/quad_0/yaw_state", 10);
+  yaw_state_pub = nh.advertise<std_msgs::Int32>("/yaw_state", 10);
 }
 
 // test_gs

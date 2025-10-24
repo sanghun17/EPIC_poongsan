@@ -383,20 +383,28 @@ void FrontierManager::cluster_frts(const PointVector &frt_new,
 
   frts2cluster.insert(frts2cluster.end(), frt_new.begin(), frt_new.end());
   // debug:
+  // int nan_count = 0;
   for (auto &pt : frt_new) {
     ByteArrayRaw bytes;
     pos2bytes(pt, bytes);
     Eigen::Vector3f norm = frtd_.frt_map_[bytes];
     if (std::isnan(norm[0]) || std::isnan(norm[1]) || std::isnan(norm[2])) {
-      std::cout << "399 At least one element in the norm is NaN." << std::endl;
-      exit(1);
+      // nan_count++;
+      // ROS_WARN("[DEBUG cluster_frts] NaN norm detected at point (%f, %f, %f), skipping", pt.x, pt.y, pt.z);
+      continue;  // Skip NaN instead of exiting
     }
     frts_norm.push_back(norm);
   }
 
+  // ROS_INFO("[DEBUG cluster_frts] frt_new=%lu, frts2cluster=%lu, frts_norm=%lu, nan_count=%d, min_required=%d",
+  //          frt_new.size(), frts2cluster.size(), frts_norm.size(), nan_count, frtp_.cluster_minmum_point_num_);
+
   // 重新聚类:
-  if (frts2cluster.size() < frtp_.cluster_minmum_point_num_)
+  if (frts2cluster.size() < frtp_.cluster_minmum_point_num_) {
+    // ROS_WARN("[DEBUG cluster_frts] Not enough points to cluster: %lu < %d",
+    //          frts2cluster.size(), frtp_.cluster_minmum_point_num_);
     return;
+  }
   pcl::PointCloud<pcl::PointXYZ>::Ptr frt_pc(
       new pcl::PointCloud<pcl::PointXYZ>);
   frt_pc->points = frts2cluster;
@@ -468,6 +476,8 @@ void FrontierManager::cluster_frts(const PointVector &frt_new,
       }
     }
   }
+  // ROS_INFO("[DEBUG cluster_frts] DBSCAN found %d clusters from %lu points", cluster_id, frts2cluster.size());
+
   for (int i = 1; i <= cluster_id; i++) {
     PointVector frt_cluster_pt;
     vector<Eigen::Vector3f> frt_cluster_norm;
@@ -484,6 +494,9 @@ void FrontierManager::cluster_frts(const PointVector &frt_new,
     cluster_list_.push_back(cluster);
     new_clusters.push_back(cluster);
   }
+
+  // ROS_INFO("[DEBUG cluster_frts] Created %lu clusters, cluster_list_ now has %lu total",
+  //          new_clusters.size(), cluster_list_.size());
   // 将噪音删掉
   for (int i = 0; i < labels.size(); i++) {
     if (labels[i] == 0) {
@@ -616,6 +629,9 @@ bool FrontierManager::is_fov_edge(const PointType &pt) {
 
 void FrontierManager::updateFrontierClusters(
     vector<ClusterInfo::Ptr> &cluster_updated, vector<int> &cluster_removed) {
+
+  // ROS_INFO("[DEBUG updateFrontierClusters] Function called. Current cluster_list_ size: %lu", cluster_list_.size());
+
   PointVector frt_new;
   auto has_dense_nbr = [&](const Eigen::Vector3i &idx) -> bool {
     for (int i = -1; i <= 1; i++) {
@@ -716,13 +732,17 @@ void FrontierManager::updateFrontierClusters(
   ros::Time t3 = ros::Time::now();
 
   // Step2: 分类，距离特别短的->good, 距离合适 && 视角合理->good
+  // ROS_INFO("[DEBUG] cells_2_update size: %lu", cells_2_update.size());
+
   vector<Eigen::Vector3i> cells_2_box_search;
   cells_2_box_search.reserve(cells_2_update.size());
   unordered_set<Eigen::Vector3i, Vector3i_Hash> bad_dis_set, bad_dir_set;
+  int dense_count = 0, force_trust_count = 0, good_count = 0;
   for (int i = 0; i < cells_2_update.size(); i++) {
     ByteArrayRaw bytes;
     idx2bytes(cells_2_update[i], bytes);
     if (get_state(cells_2_update[i]) == DENSE) {
+      dense_count++;
       continue;
     }
     PointType pt;
@@ -732,12 +752,14 @@ void FrontierManager::updateFrontierClusters(
         !is_fov_edge(pt)) {
       // if (view_distance < frtp_.good_observation_force_trust_length_) {
       frtd_.label_map_[bytes] = DENSE;
+      force_trust_count++;
       continue;
     }
     bool bad_dir = is_gap_point(pt) || is_fov_edge(pt);
     bool bad_dis = view_distance > frtp_.good_observation_trust_length_;
     if (!bad_dir && !bad_dis) {
       frtd_.label_map_[bytes] = DENSE;
+      good_count++;
       continue;
     } else if (bad_dis) {
       bad_dis_set.insert(cells_2_update[i]);
@@ -746,6 +768,9 @@ void FrontierManager::updateFrontierClusters(
     }
     cells_2_box_search.push_back(cells_2_update[i]);
   }
+
+  // ROS_INFO("[DEBUG] Filtered cells: dense=%d, force_trust=%d, good=%d, bad_dis=%lu, bad_dir=%lu, cells_2_box_search=%lu",
+  //          dense_count, force_trust_count, good_count, bad_dis_set.size(), bad_dir_set.size(), cells_2_box_search.size());
   // Step3: 分类，距离过长 || 视角过大->bad ,
   // 但要计算法向量判断一下是否是噪声点，如果是噪声点也设成good
   vector<PointVector> pts_inside;
@@ -804,27 +829,37 @@ void FrontierManager::updateFrontierClusters(
   }
   frt_new.clear();
   frt_new.reserve(cells_2_box_search.size());
+  int sparse_count = 0, dense_nbr_count = 0, old_frt_count = 0;
   for (auto &cell : cells_2_box_search) {
     ByteArrayRaw bytes;
     idx2bytes(cell, bytes);
-    if (get_state(cell) == SPARSE && has_dense_nbr(cell)) {
-      if (bad_dis_set.count(cell)) {
-        frtd_.label_map_[bytes] = FRONTIER_DIS;
-      } else if (bad_dir_set.count(cell)) {
-        frtd_.label_map_[bytes] = FRONTIER_DIR;
-      } else {
-        ROS_ERROR("wtf 885");
-        exit(1);
-      }
-      if (old_frt_set.count(cell) == 0) {
-        PointType pt;
-        idx2pos(cell, pt);
-        frt_new.push_back(pt);
+    if (get_state(cell) == SPARSE) {
+      sparse_count++;
+      if (has_dense_nbr(cell)) {
+        dense_nbr_count++;
+        if (bad_dis_set.count(cell)) {
+          frtd_.label_map_[bytes] = FRONTIER_DIS;
+        } else if (bad_dir_set.count(cell)) {
+          frtd_.label_map_[bytes] = FRONTIER_DIR;
+        } else {
+          ROS_ERROR("wtf 885");
+          exit(1);
+        }
+        if (old_frt_set.count(cell) == 0) {
+          PointType pt;
+          idx2pos(cell, pt);
+          frt_new.push_back(pt);
+        } else {
+          old_frt_count++;
+        }
       }
     } else {
       frtd_.frt_map_.erase(bytes);
     }
   }
+
+  // ROS_INFO("[DEBUG] cells_2_box_search=%lu, sparse=%d, has_dense_nbr=%d, old_frt=%d, frt_new=%lu",
+  //          cells_2_box_search.size(), sparse_count, dense_nbr_count, old_frt_count, frt_new.size());
 
   // cout << "set normal " << (ros::Time::now() - t4).toSec() * 1000 << endl;
   ros::Time t5 = ros::Time::now();
@@ -842,7 +877,14 @@ void FrontierManager::updateFrontierClusters(
                      updated_frt_pts.end());
   updated_pts.insert(updated_pts.end(), frt_new.begin(), frt_new.end());
   update_updating_aabb(updated_pts);
+
+  // ROS_INFO("[DEBUG updateFrontierClusters] Before cluster_frts: frt_new=%lu, cluster_list_=%lu",
+  //          frt_new.size(), cluster_list_.size());
+
   cluster_frts(frt_new, cluster_updated, cluster_removed);
+
+  // ROS_INFO("[DEBUG updateFrontierClusters] After cluster_frts: cluster_list_=%lu, cluster_updated=%lu, cluster_removed=%lu",
+  //          cluster_list_.size(), cluster_updated.size(), cluster_removed.size());
 }
 
 int FrontierManager::surface_pos2idx(const PointType &pt) {

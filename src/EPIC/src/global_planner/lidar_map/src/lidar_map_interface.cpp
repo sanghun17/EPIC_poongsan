@@ -88,6 +88,35 @@ void LIOInterface::init(ros::NodeHandle &nh) {
   nh.param("lidar_perception/fov_viewpoint_down", lp_->fov_vp_down, -0.1);
   nh.getParam("lidar_perception/max_ray_length", lp_->max_ray_length_);
   ld_->first_map_flag_ = true;
+
+  // Initialize TF listener for frame transforms
+  tf_buffer_.reset(new tf2_ros::Buffer);
+  tf_listener_.reset(new tf2_ros::TransformListener(*tf_buffer_));
+
+  // Wait for first messages to get frame information
+  ROS_INFO("[LIOInterface] Waiting for first odometry message on %s...", odom_topic.c_str());
+  nav_msgs::Odometry::ConstPtr first_odom =
+      ros::topic::waitForMessage<nav_msgs::Odometry>(odom_topic, nh, ros::Duration(10.0));
+
+  ROS_INFO("[LIOInterface] Waiting for first pointcloud message on %s...", cloud_topic.c_str());
+  sensor_msgs::PointCloud2::ConstPtr first_cloud =
+      ros::topic::waitForMessage<sensor_msgs::PointCloud2>(cloud_topic, nh, ros::Duration(10.0));
+
+  if (first_odom && first_cloud) {
+    std::string map_frame = first_odom->header.frame_id;
+    std::string body_frame = first_odom->child_frame_id;
+    std::string cloud_frame = first_cloud->header.frame_id;
+
+    ROS_INFO("[LIOInterface] Detected frames - Map: %s, Body: %s, Cloud: %s",
+             map_frame.c_str(), body_frame.c_str(), cloud_frame.c_str());
+
+    // Initialize transform lookup
+    initializeTransform(map_frame, body_frame, cloud_frame);
+  } else {
+    ROS_WARN("[LIOInterface] Failed to receive initial messages, transform initialization skipped");
+    needs_transform_ = false;
+  }
+
   // update_trigger_puber_ =
   //     nh.advertise<std_msgs::Empty>("/lio_interface/map_updated", 1);
   // cloud_sub_.reset(new message_filters::Subscriber<sensor_msgs::PointCloud2>(

@@ -255,6 +255,7 @@ void FrontierManager::viz_pocc() {
   pcl::toROSMsg(frt_cloud, frt_msg);
   occ_msg.header.stamp = ros::Time::now();
   pocc_msg.header.stamp = ros::Time::now();
+  frt_msg.header.stamp = ros::Time::now();
   occ_msg.header.frame_id = "odom";
   pocc_msg.header.frame_id = "odom";
   frt_msg.header.frame_id = "odom";

@@ -49,12 +49,21 @@ private:
 
 void FrontierManager::generateTSPViewpoints(Eigen::Vector3f&center,  vector<TopoNode::Ptr> &viewpoints) {
 
+  // ROS_INFO("[DEBUG generateTSPViewpoints] Starting with cluster_list_ size: %lu", cluster_list_.size());
+
   unordered_set<ClusterInfo::Ptr> revp_clusters_set; // (re)-generate viewpoints clusters
   vector<float> distance_odom2cluster;
   vector<ClusterInfo::Ptr> old_clusters_within_consideration;
+  int dormant_count = 0, unreachable_count = 0;
   for (auto &cluster : cluster_list_) {
-    if (cluster->is_dormant_ || !cluster->is_reachable_)
+    if (cluster->is_dormant_) {
+      dormant_count++;
       continue;
+    }
+    if (!cluster->is_reachable_) {
+      unreachable_count++;
+      continue;
+    }
     if (revp_clusters_set.count(cluster))
       continue;
     old_clusters_within_consideration.push_back(cluster);
@@ -63,6 +72,9 @@ void FrontierManager::generateTSPViewpoints(Eigen::Vector3f&center,  vector<Topo
     float distance = graph_->estimateRoughDistance(cluster->center_, cluster->odom_id_);
     distance_odom2cluster.push_back(distance);
   }
+
+  // ROS_INFO("[DEBUG generateTSPViewpoints] Filtered: dormant=%d, unreachable=%d, kept=%lu",
+  //          dormant_count, unreachable_count, old_clusters_within_consideration.size());
 
   vector<int> idx;
   for (int i = 0; i < distance_odom2cluster.size(); i++) {
@@ -105,6 +117,9 @@ void FrontierManager::generateTSPViewpoints(Eigen::Vector3f&center,  vector<Topo
     if (cluster->is_reachable_)
       clusters_can_be_searched_.push_back(cluster);
   }
+
+  // ROS_INFO("[DEBUG generateTSPViewpoints] After removeUnreachableViewpoints: %lu -> %lu reachable",
+  //          revp_clusters_vec.size(), clusters_can_be_searched_.size());
 
   ros::Time t3 = ros::Time::now();
   // cout << "remove unreachable cluster cost: " << (t3 - t2).toSec() * 1000 << "ms" << endl;
@@ -155,6 +170,9 @@ void FrontierManager::generateTSPViewpoints(Eigen::Vector3f&center,  vector<Topo
     idx2.push_back(i);
   }
   sort(idx2.begin(), idx2.end(), [&](int a, int b) { return distance2odom2[a] < distance2odom2[b]; });
+
+  // ROS_INFO("[DEBUG generateTSPViewpoints] After selectBestViewpoint: %lu tsp_clusters", tsp_clusters.size());
+
   float mean_distance = accumulate(distance2odom2.begin(), distance2odom2.end(), 0.0) / distance2odom2.size();
   viewpoints.clear();
   for (int i = 0; i < (int)idx2.size(); i++) {
@@ -167,6 +185,8 @@ void FrontierManager::generateTSPViewpoints(Eigen::Vector3f&center,  vector<Topo
     vp_node->yaw_ = tsp_clusters[idx2[i]]->best_vp_yaw_;
     viewpoints.push_back(vp_node);
   }
+
+  // ROS_INFO("[DEBUG generateTSPViewpoints] Final viewpoints generated: %lu", viewpoints.size());
   // ROS_INFO("vp cluster cost: %fms  ,remove unreachable cost: %fms, select vp cost: %fms", (t2 - t1).toSec() * 1000, (t3 - t2).toSec() * 1000,
   //          (t4 - t3).toSec() * 1000);
   

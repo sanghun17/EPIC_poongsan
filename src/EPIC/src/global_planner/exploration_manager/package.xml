@@ -61,6 +61,7 @@
   <build_depend>active_perception</build_depend>
 
   <build_depend>pointcloud_topo</build_depend>
+  <build_depend>lidar_map</build_depend>
   <build_depend>path_searching</build_depend>
   <build_depend>traj_utils</build_depend>
   <build_depend>lkh_tsp_solver</build_depend>
@@ -83,6 +84,7 @@
   <exec_depend>tf2_geometry_msgs</exec_depend>
 
   <exec_depend>pointcloud_topo</exec_depend>
+  <exec_depend>lidar_map</exec_depend>
   <exec_depend>active_perception</exec_depend>
   <exec_depend>path_searching</exec_depend>
   <exec_depend>traj_utils</exec_depend>

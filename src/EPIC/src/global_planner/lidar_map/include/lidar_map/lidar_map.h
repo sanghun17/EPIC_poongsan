@@ -21,6 +21,8 @@
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <std_msgs/Float32.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 using PointType = pcl::PointXYZ;
 using PointVector = KD_TREE<PointType>::PointVector;
 using namespace std;
@@ -75,6 +77,19 @@ private:
   ros::Publisher update_trigger_puber_;
 
   KD_TREE<PointType> ikd_Tree_map;
+
+  // Transform members for pointcloud frame conversion
+  bool needs_transform_;
+  std::string map_frame_;
+  std::string body_frame_;
+  std::string cloud_frame_;
+  Eigen::Matrix4f T_body_to_cloud_;
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+
+  void initializeTransform(const std::string& map_frame,
+                          const std::string& body_frame,
+                          const std::string& cloud_frame);
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
