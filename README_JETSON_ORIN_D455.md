@@ -87,12 +87,6 @@ cd ..
 catkin build -DCMAKE_BUILD_TYPE=Release
 ```
 
-### 3. Install RealSense SDK (if not already installed)
-```bash
-sudo apt-get install ros-noetic-realsense2-camera
-sudo apt-get install ros-noetic-realsense2-description
-```
-
 ## Configuration Files
 
 ### Main Configuration: `d455.yaml`
@@ -114,9 +108,7 @@ FrontierManager/frontier_observation_trust_length: 10.0
 ```
 
 ### Launch Files
-
-1. **Simulation Mode** (for testing): `simulation_d455.launch`
-2. **Real Hardware**: `d455.launch`
+1. **Real Hardware**: `d455.launch`
 
 ## Running the Demo
 
@@ -126,25 +118,11 @@ cd ~/fast_livo2_ws
 source devel/setup.bash
 roslaunch fast_livo fast_livo_d455.launch  # Use your FAST-LIVO2 launch file
 ```
-
-### Terminal 2: Verify Topics
-```bash
-# Check odometry is publishing
-rostopic echo /aft_mapped_to_odom -n 1
-
-# Check point cloud is publishing
-rostopic echo /cloud_registered -n 1
-
-# Check TF tree is complete
-rosrun tf view_frames
-# Should show: camera_link -> camera_init -> aft_mapped
-```
-
-### Terminal 3: Start EPIC Exploration
+### Terminal 2: Start EPIC Exploration
 ```bash
 cd ~/epic_ws
 source devel/setup.bash
-roslaunch exploration_manager d455.launch
+roslaunch epic_planner d455.launch
 ```
 
 ### Terminal 4: Trigger Exploration (in RViz)
@@ -152,8 +130,7 @@ roslaunch exploration_manager d455.launch
 2. Set Fixed Frame to `camera_init`
 3. Add visualization topics:
    - `/exploration_node/frt/markers` - Frontier markers
-   - `/exploration_node/cluster/box` - Cluster bounding boxes
-   - `/exploration_node/global_path` - Planned path
+   - `global_tour` - Global Graph
 4. Use RViz "2D Nav Goal" tool to trigger exploration
 5. Or use command line:
 ```bash
@@ -214,18 +191,6 @@ pose:
 - cluster_direction_radius: 0.15 → -0.5 (allow different normal orientations)
 - cluster_minmum_point_num: 3 → 2 (fewer points needed per cluster)
 
-## Performance Notes
-
-### Jetson Orin AGX Settings
-- Build in **Release mode** for optimal performance: `catkin build -DCMAKE_BUILD_TYPE=Release`
-- Point cloud voxel filtering: 0.1m leaf size (balances accuracy vs speed)
-- Frontier update rate: ~5-10 Hz
-- Path planning: ~1-2 Hz
-
-### Memory Usage
-- Typical RAM usage: 2-4 GB
-- Peak with large maps: 6-8 GB
-- Recommended: 32GB+ system RAM for complex environments
 
 ## Repository Structure
 
