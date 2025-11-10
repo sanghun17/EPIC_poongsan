@@ -48,11 +48,11 @@
     <remap from="/position_cmd" to="/planning/pos_cmd" />
   </node>
 
+  <!-- Simulation environment (garage map with drone) -->
+  <include file="$(find mars_drone_sim)/launch/garage.launch">
+    <arg name="sensing_horizon" value="60.0" />
+  </include>
+
   <!-- RViz visualization -->
   <include file="$(find epic_planner)/launch/rviz.launch" />
-
-  <!-- Note: For real hardware on Desktop, launch your sensor/SLAM system separately:
-       - FAST-LIVO2 or other SLAM providing odometry on /quad_0/lidar_slam/odom
-       - Point cloud on the topic configured in garage.yaml
-       This is adapted for Desktop without simulation (mars_drone_sim) -->
 </launch>

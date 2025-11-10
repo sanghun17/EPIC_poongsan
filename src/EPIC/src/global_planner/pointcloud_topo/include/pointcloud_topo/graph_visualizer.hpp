@@ -150,12 +150,23 @@ public:
 
   void inline vizTour(const vector<Eigen::Vector3f> &path, VizColor color,
                       string ns) {
-    MarkerArray tour_marker_array;
+    // First, publish DELETEALL markers separately to ensure RViz processes them
+    MarkerArray clear_marker_array;
     Marker clear_marker;
+    clear_marker.header.frame_id = "odom";
+    clear_marker.header.stamp = ros::Time::now();
     clear_marker.action = Marker::DELETEALL;
-    if (ns == "global")
-      tour_marker_array.markers.push_back(clear_marker);
+    clear_marker.ns = ns + "_path";
+    clear_marker_array.markers.push_back(clear_marker);
+    clear_marker.ns = ns + "_path_order";
+    clear_marker_array.markers.push_back(clear_marker);
+    global_tour_pub_.publish(clear_marker_array);
 
+    // Small delay to ensure RViz processes the delete command
+    ros::Duration(0.001).sleep();
+
+    // Now publish the new markers
+    MarkerArray tour_marker_array;
     if (path.size() >= 2) {
       Marker global_path_marker, global_path_order_marker;
       int id = 0;

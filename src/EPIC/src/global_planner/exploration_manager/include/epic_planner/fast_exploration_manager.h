@@ -55,6 +55,8 @@ public:
   void initialize(ros::NodeHandle &nh, FrontierManager::Ptr frt_manager,
                   FastPlannerManager::Ptr planner_manager);
   int planGlobalPath(const Vector3d &pos, const Vector3d &vel);
+  int planGoalPath(const Vector3d &goal_pos, double goal_yaw);
+  void simplifyGlobalTour();
   void solveLHK(Eigen::MatrixXd &cost_mat, vector<int> &indices);
 
   void surfaceFrtCalllback(const ros::TimerEvent &e);

@@ -33,7 +33,8 @@
     "peacock.color": "pink",
     "files.associations": {
         "*.conf": "bitbake",
-        "*.inc": "bitbake"
+        "*.inc": "bitbake",
+        "vector": "cpp"
     },
     "cursorpyright.analysis.extraPaths": [
         "/home/wave/catkin_ws/devel/lib/python3/dist-packages",

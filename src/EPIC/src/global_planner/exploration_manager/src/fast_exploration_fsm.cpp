@@ -21,14 +21,7 @@ typedef visualization_msgs::Marker Marker;
 typedef visualization_msgs::MarkerArray MarkerArray;
 
 void FastExplorationFSM::FSMCallback(const ros::TimerEvent &e) {
-  ros::Time fsm_start_time = ros::Time::now();  // FSM 시작 시간 측정
-  
-  // pubState 호출 빈도 줄이기 (5번에 1번)
-  static int pubstate_counter = 0;
-  if (++pubstate_counter >= 5) {
-    pubState();
-    pubstate_counter = 0;
-  }
+  pubState();
   switch (state_) {
   case INIT: {
     if (!fd_->have_odom_) {
@@ -40,8 +33,7 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent &e) {
   }
 
   case WAIT_TRIGGER: {
-    // 로깅 빈도 줄이기 (더 긴 간격으로)
-    ROS_WARN_THROTTLE(5.0, "wait for trigger."); // 1.0 → 5.0초로 증가
+    ROS_WARN_THROTTLE(1.0, "wait for trigger.");
     break;
   }
 
@@ -56,33 +48,19 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent &e) {
     break;
   }
 
-  case PLAN_TRAJ: {
+  case PLAN_TRAJ_EXP: {
     if (!fd_->trigger_)
       return;
     if (planner_manager_->topo_graph_->odom_node_->neighbors_.empty())
       return;
-    
-    // PLAN_TRAJ 간격 시간 측정
-    ros::Time current_time = ros::Time::now();
-    if (last_plan_traj_time_.toSec() > 0) {
-      double interval = (current_time - last_plan_traj_time_).toSec() * 1000.0;
-      // 로깅 빈도 줄이기 (10번에 1번만)
-      static int interval_log_counter = 0;
-      if (++interval_log_counter >= 10) {
-        ROS_INFO("\033[32m PLAN_TRAJ interval \033[0m: %.3f ms", interval);
-        interval_log_counter = 0;
-      }
-    }
-    last_plan_traj_time_ = current_time;
-    
     ros::Time start = ros::Time::now();
     // 要报min-step的case
     LocalTrajData *info = &planner_manager_->local_data_;
-    // double t_cur = (ros::Time::now() - info->start_time_).toSec(); //
-    // double time_to_end = info->duration_ - t_cur; //
+    double t_cur = (ros::Time::now() - info->start_time_).toSec();
+    double time_to_end = info->duration_ - t_cur;
     if (expl_manager_->ed_->global_tour_.size() == 2) {
       Eigen::Vector3f goal = expl_manager_->ed_->global_tour_[1];
-      if ((goal - fd_->odom_pos_).norm() < 5e-2) {  // 1e-1 → 5e-2로 더 엄격하게
+      if ((goal - fd_->odom_pos_).norm() < 1e-1) {
         transitState(FINISH, "fsm");
         return;
       }
@@ -91,22 +69,11 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent &e) {
     exec_timer_.stop();
     int res = callExplorationPlanner();
     exec_timer_.start();
-    
-    // call planner 로깅 빈도 줄이기 (5번에 1번만)
-    static int planner_log_counter = 0;
-    if (++planner_log_counter >= 5) {
-      ROS_INFO("\033[31m call planner \033[0m: %.3f",
-               (ros::Time::now() - tplan).toSec() * 1000.0);
-      planner_log_counter = 0;
-    }
-    
-    // Publish call planner cost (토픽은 유지 - 외부에서 사용할 수 있음)
-    std_msgs::Float32 timing_msg;
-    timing_msg.data = (ros::Time::now() - tplan).toSec() * 1000.0;
-    call_planner_cost_pub_.publish(timing_msg);
+    ROS_INFO("\033[31m call planner \033[0m: %.3f",
+             (ros::Time::now() - tplan).toSec() * 1000.0);
 
     if (res == SUCCEED) {
-      // poly_yaw_traj_pub_.publish(fd_->newest_yaw_traj_); //
+      poly_yaw_traj_pub_.publish(fd_->newest_yaw_traj_);
       poly_traj_pub_.publish(fd_->newest_traj_);
       fd_->static_state_ = false;
       if (fd_->use_bubble_a_star_) {
@@ -120,17 +87,61 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent &e) {
 
     } else if (res == NO_FRONTIER) {
       // if (planner_manager_->topo_graph_->global_view_points_.empty())
-      transitState(FINISH, "PLAN_TRAJ: no frontier");
+      transitState(FINISH, "PLAN_TRAJ_EXP: no frontier");
       fd_->static_state_ = true;
     } else if (res == FAIL) {
-      // Still in PLAN_TRAJ state, keep replanning
+      // Still in PLAN_TRAJ_EXP state, keep replanning
       stopTraj();
-      transitState(PLAN_TRAJ, "PLAN_TRAJ: plan failed", true);
+      transitState(PLAN_TRAJ_EXP, "PLAN_TRAJ_EXP: plan failed", true);
 
     } else if (res == START_FAIL) {
-      transitState(CAUTION, "PLAN_TRAJ: start failed", true);
+      transitState(CAUTION, "PLAN_TRAJ_EXP: start failed", true);
     } else {
       cout << "330?" << endl;
+    }
+    break;
+  }
+
+  case PLAN_TRAJ_RTH: {
+    if (!has_goal_rth_)
+      return;
+    if (planner_manager_->topo_graph_->odom_node_->neighbors_.empty())
+      return;
+
+    // Check if goal reached
+    double dist = (fd_->odom_pos_.cast<double>() - goal_rth_.head<3>()).norm();
+    ROS_INFO("\033[36m[RTH] Distance to goal: %.3f m (tolerance: %.3f m)\033[0m", dist, goal_tolerance_);
+
+    if (dist < goal_tolerance_) {
+      has_goal_rth_ = false;
+      global_path_update_timer_.stop();  // Stop replanning timer
+      transitState(FINISH, "PLAN_TRAJ_RTH: goal reached");
+      ROS_INFO("\033[32m[RTH] Goal reached! \033[0m");
+      return;
+    }
+
+    ros::Time tplan = ros::Time::now();
+    exec_timer_.stop();
+    int res = callGoalPlanner();
+    exec_timer_.start();
+    ROS_INFO("\033[31m call goal planner \033[0m: %.3f",
+             (ros::Time::now() - tplan).toSec() * 1000.0);
+
+    if (res == SUCCEED) {
+      poly_yaw_traj_pub_.publish(fd_->newest_yaw_traj_);
+      poly_traj_pub_.publish(fd_->newest_traj_);
+      fd_->static_state_ = false;
+      transitState(EXEC_TRAJ, "PLAN_TRAJ_RTH: plan success");
+      fd_->use_bubble_a_star_ = false;
+      fd_->half_resolution = false;
+
+    } else if (res == FAIL) {
+      // Still in PLAN_TRAJ_RTH state, keep replanning
+      stopTraj();
+      transitState(PLAN_TRAJ_RTH, "PLAN_TRAJ_RTH: plan failed", true);
+
+    } else if (res == START_FAIL) {
+      transitState(CAUTION, "PLAN_TRAJ_RTH: start failed", true);
     }
     break;
   }
@@ -140,13 +151,16 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent &e) {
     double collision_time;
     bool safe = planner_manager_->checkTrajCollision(collision_time);
     if (!safe) {
+      // Return to appropriate planning state
+      EXPL_STATE next_state = has_goal_rth_ ? PLAN_TRAJ_RTH : PLAN_TRAJ_EXP;
       transitState(
-          PLAN_TRAJ,
+          next_state,
           "safetyCallback: not safe, time:" + to_string(collision_time), true);
       if (collision_time < fp_->replan_time_ + 0.2)
         stopTraj();
     } else if (!planner_manager_->checkTrajVelocity()) {
-      transitState(PLAN_TRAJ, "velocity too fast", true);
+      EXPL_STATE next_state = has_goal_rth_ ? PLAN_TRAJ_RTH : PLAN_TRAJ_EXP;
+      transitState(next_state, "velocity too fast", true);
     }
 
     break;
@@ -167,8 +181,10 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent &e) {
     exec_timer_.start();
     double dis2occ =
         planner_manager_->lidar_map_interface_->getDisToOcc(fd_->odom_pos_);
-    if (dis2occ > planner_manager_->gcopter_config_->dilateRadiusSoft)
-      transitState(PLAN_TRAJ, "safe now");
+    if (dis2occ > planner_manager_->gcopter_config_->dilateRadiusSoft) {
+      EXPL_STATE next_state = has_goal_rth_ ? PLAN_TRAJ_RTH : PLAN_TRAJ_EXP;
+      transitState(next_state, "safe now");
+    }
     break;
   }
   case LAND: {
@@ -186,15 +202,6 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent &e) {
 
     break;
   }
-  }
-  ros::Time fsm_end_time = ros::Time::now();  // FSM 종료 시간 측정
-  double fsm_duration = (fsm_end_time - fsm_start_time).toSec() * 1000.0;
-  
-  // FSM Duration 로깅 빈도 줄이기 (10번에 1번만)
-  static int fsm_log_counter = 0;
-  if (++fsm_log_counter >= 10) {
-    ROS_INFO("\033[32m FSM Callback Duration \033[0m: %.3f ms", fsm_duration);
-    fsm_log_counter = 0;
   }
 }
 
@@ -214,6 +221,7 @@ void FastExplorationFSM::init(ros::NodeHandle &nh,
            fp_->replan_time_after_traj_start_, 0.5);
   nh.param("fsm/replan_time_before_traj_end", fp_->replan_time_before_traj_end_,
            0.5);
+  nh.param("fsm/goal_tolerance", goal_tolerance_, 0.3);
   /* Initialize main modules */
   // expl_manager_.reset(new FastExplorationManager);
   // expl_manager_->initialize(nh);
@@ -222,14 +230,12 @@ void FastExplorationFSM::init(ros::NodeHandle &nh,
 
   state_ = EXPL_STATE::INIT;
   fd_->have_odom_ = false;
-  fd_->state_str_ = {"INIT",      "WAIT_TRIGGER", "PLAN_TRAJ", "CAUTION",
-                     "EXEC_TRAJ", "FINISH",       "LAND"};
+  fd_->state_str_ = {"INIT",      "WAIT_TRIGGER", "PLAN_TRAJ_EXP", "PLAN_TRAJ_RTH",
+                     "CAUTION",   "EXEC_TRAJ",    "FINISH",        "LAND"};
   fd_->static_state_ = true;
   fd_->trigger_ = false;
   fd_->use_bubble_a_star_ = false;
-  do_global_search_ = true;  // 기본값: 글로벌 검색 수행
-  do_local_search_ = true;  // 기본값: 로컬 검색 수행
-  last_plan_traj_time_ = ros::Time(0);  // 초기값 설정
+  has_goal_rth_ = false;
   battary_sub_ =
       nh.subscribe("/mavros/battery", 10, &FastExplorationFSM::battaryCallback,
                    this, ros::TransportHints().tcpNoDelay());
@@ -243,11 +249,10 @@ void FastExplorationFSM::init(ros::NodeHandle &nh,
                                &FastExplorationFSM::FSMCallback, this);
   // }
   global_path_update_timer_ = nh.createTimer(
-      ros::Duration(1.0), &FastExplorationFSM::globalPathUpdateCallback, this);
-  local_planning_timer_ = nh.createTimer(
-      ros::Duration(0.05), &FastExplorationFSM::localPlanningCallback, this);
+      ros::Duration(0.2), &FastExplorationFSM::globalPathUpdateCallback, this);
   trigger_sub_ = nh.subscribe("/waypoint_generator/waypoints", 1,
                               &FastExplorationFSM::triggerCallback, this);
+  srv_goal_ = nh.advertiseService("/srv_rth", &FastExplorationFSM::goalServiceCallback, this);
   replan_pub_ = nh.advertise<std_msgs::Empty>("/planning/replan", 10);
 
   heartbeat_pub_ = nh.advertise<std_msgs::Empty>("/planning/heartbeat", 10);
@@ -261,21 +266,21 @@ void FastExplorationFSM::init(ros::NodeHandle &nh,
   time_cost_pub_ = nh.advertise<std_msgs::Float32>("/time_cost", 10);
   static_pub_ = nh.advertise<std_msgs::Bool>("/planning/static", 10);
   state_pub_ = nh.advertise<visualization_msgs::Marker>("/planning/state", 10);
-  
+
   // Global planning timing publishers
-  update_topo_skeleton_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/update_topo_skeleton_cost", 10);
-  update_odom_vertex_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/update_odom_vertex_cost", 10);
-  vp_cluster_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/vp_cluster_cost", 10);
-  remove_unreachable_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/remove_unreachable_cost", 10);
-  select_vp_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/select_vp_cost", 10);
-  insert_viewpoint_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/insert_viewpoint_cost", 10);
-  calculate_tsp_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/calculate_tsp_cost", 10);
-  lkh_solver_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/lkh_solver_cost", 10);
-  call_planner_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/call_planner_cost", 10);
-  ikd_tree_insert_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/ikd_tree_insert_cost", 10);
-  update_frontier_clusters_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/update_frontier_clusters_cost", 10);
-  fast_searcher_search_cost_pub_ = nh.advertise<std_msgs::Float32>("/local_planning/fast_searcher_search_cost", 10);
-  bubble_astar_search_cost_pub_ = nh.advertise<std_msgs::Float32>("/local_planning/bubble_astar_search_cost", 10);
+  update_topo_skeleton_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/update_topo_skeleton_cost", 10);
+  update_odom_vertex_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/update_odom_vertex_cost", 10);
+  vp_cluster_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/vp_cluster_cost", 10);
+  remove_unreachable_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/remove_unreachable_cost", 10);
+  select_vp_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/select_vp_cost", 10);
+  insert_viewpoint_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/insert_viewpoint_cost", 10);
+  calculate_tsp_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/calculate_tsp_cost", 10);
+  lkh_solver_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/lkh_solver_cost", 10);
+  call_planner_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/call_planner_cost", 10);
+  ikd_tree_insert_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/ikd_tree_insert_cost", 10);
+  update_frontier_clusters_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/update_frontier_clusters_cost", 10);
+  fast_searcher_search_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/fast_searcher_search_cost", 10);
+  bubble_astar_search_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/bubble_astar_search_cost", 10);
 
   string odom_topic, cloud_topic;
   nh.getParam("odometry_topic", odom_topic);
@@ -298,8 +303,8 @@ void FastExplorationFSM::battaryCallback(
 }
 
 void FastExplorationFSM::updateTopoAndGlobalPath() {
-  if (!(state_ == WAIT_TRIGGER || state_ == PLAN_TRAJ || state_ == EXEC_TRAJ ||
-        state_ == FINISH)) {
+  if (!(state_ == WAIT_TRIGGER || state_ == PLAN_TRAJ_EXP || state_ == PLAN_TRAJ_RTH ||
+        state_ == EXEC_TRAJ || state_ == FINISH)) {
     global_path_update_timer_.stop();
     // expl_manager_->frontier_manager_ptr_->viz_pocc();
     expl_manager_->frontier_manager_ptr_->visfrtcluster();
@@ -352,6 +357,22 @@ void FastExplorationFSM::updateTopoAndGlobalPath() {
       return;
     }
   }
+
+  // Handle RTH mode and exploration mode separately
+  if (has_goal_rth_) {
+    // RTH mode: call planGoalPath and transition to PLAN_TRAJ_RTH
+    int res = expl_manager_->planGoalPath(goal_rth_.head<3>(), goal_rth_(3));
+    if (res == SUCCEED && state_ != WAIT_TRIGGER) {
+      transitState(PLAN_TRAJ_RTH, "planGoalPath: succeed");
+    } else if (res == FAIL) {
+      // Keep current state, will retry on next timer callback
+      ROS_WARN("RTH global path planning failed, will retry");
+    }
+    global_path_update_timer_.start();
+    return;
+  }
+
+  // Exploration mode: use TSP-based global planning
   cout << endl << endl;
   cout << "\033[1;33m------------- <" << cnt
        << "> Plan Global Path start---------------" << "\033[0m" << endl;
@@ -362,16 +383,8 @@ void FastExplorationFSM::updateTopoAndGlobalPath() {
   //   ROS_ERROR("time too long");
   //   exit(0);
   // }
-  // ROS_INFO("update topo skeleton cost: %fms, update odom vertex cost:%fms ",
-  //          (t3 - t2).toSec() * 1000, (t4 - t3).toSec() * 1000);
-  
-  // Publish individual timing data
-  std_msgs::Float32 timing_msg;
-  timing_msg.data = (t3 - t2).toSec() * 1000;
-  update_topo_skeleton_cost_pub_.publish(timing_msg);
-  
-  timing_msg.data = (t4 - t3).toSec() * 1000;
-  update_odom_vertex_cost_pub_.publish(timing_msg);
+  ROS_INFO("update topo skeleton cost: %fms, update odom vertex cost:%fms ",
+           (t3 - t2).toSec() * 1000, (t4 - t3).toSec() * 1000);
   Eigen::Vector3d vel = fd_->odom_vel_.cast<double>();
   Eigen::Vector3d odom = fd_->odom_pos_.cast<double>();
   int res = expl_manager_->planGlobalPath(odom, vel);
@@ -393,7 +406,7 @@ void FastExplorationFSM::updateTopoAndGlobalPath() {
   if (res == NO_FRONTIER && state_ != WAIT_TRIGGER) {
     transitState(FINISH, "planGlobalPath: no frontier");
   } else if (res == SUCCEED && state_ != WAIT_TRIGGER) {
-    transitState(PLAN_TRAJ, "planGlobalPath: succeed");
+    transitState(PLAN_TRAJ_EXP, "planGlobalPath: succeed");
   }
 
   expl_manager_->frontier_manager_ptr_->viz_pocc();
@@ -409,15 +422,110 @@ void FastExplorationFSM::updateTopoAndGlobalPath() {
 }
 
 void FastExplorationFSM::globalPathUpdateCallback(const ros::TimerEvent &e) {
-  // 글로벌 플래닝 전에 플래그 설정
-  do_global_search_ = true;
-  // 기존 글로벌 플래닝 실행
   updateTopoAndGlobalPath();
 }
 
-void FastExplorationFSM::localPlanningCallback(const ros::TimerEvent &e) {
-  if (state_ == EXEC_TRAJ && planner_manager_->local_data_.traj_id_ > 0) {
-      do_local_search_ = true;
-      transitState(PLAN_TRAJ, "local_planning_timer: periodic replan", true);
+bool FastExplorationFSM::goalServiceCallback(epic_planner::GoalService::Request& req,
+                                             epic_planner::GoalService::Response& res) {
+  goal_rth_ << req.x, req.y, req.z, req.yaw;
+  has_goal_rth_ = true;
+
+  ROS_INFO("\033[32m[RTH] Goal received: (%.2f, %.2f, %.2f), yaw: %.2f\033[0m",
+           req.x, req.y, req.z, req.yaw);
+
+  // Trigger state transition
+  if (state_ == WAIT_TRIGGER || state_ == EXEC_TRAJ || state_ == PLAN_TRAJ_EXP) {
+    transitState(PLAN_TRAJ_RTH, "Goal service called");
+  }
+
+  res.success = true;
+  res.message = "Goal received, navigating to position";
+  return true;
+}
+
+int FastExplorationFSM::callGoalPlanner() {
+  // Check prerequisites
+  if (planner_manager_->topo_graph_->odom_node_->neighbors_.empty())
+    return START_FAIL;
+  if (expl_manager_->ed_->global_tour_.size() < 2)
+    return FAIL;
+
+  Eigen::Vector3d goal_pos = goal_rth_.head<3>();
+  double goal_yaw = goal_rth_(3);
+
+  // Call exploration manager's goal planning function to generate global_tour_
+  int res = expl_manager_->planGoalPath(goal_pos, goal_yaw);
+  if (res != SUCCEED) {
+    return res;
+  }
+
+  // Update next_goal_node_ from global_tour_
+  expl_manager_->updateGoalNode();
+
+  // Generate local trajectory using fast_searcher
+  vector<Eigen::Vector3f> path_next_goal;
+  res = planner_manager_->fast_searcher_->search(
+      planner_manager_->topo_graph_->odom_node_,
+      fd_->odom_vel_,
+      expl_manager_->ed_->next_goal_node_,
+      0.2, path_next_goal);
+
+  if (res == ParallelBubbleAstar::NO_PATH) {
+    ROS_ERROR("[RTH] No path to goal");
+    return FAIL;
+  } else if (res == ParallelBubbleAstar::START_FAIL) {
+    ROS_ERROR("[RTH] Start point in occ");
+    return START_FAIL;
+  } else if (res == ParallelBubbleAstar::END_FAIL) {
+    ROS_ERROR("[RTH] End point in occ");
+    return FAIL;
+  } else if (res == ParallelBubbleAstar::TIME_OUT) {
+    ROS_ERROR("[RTH] Time out");
+    return FAIL;
+  }
+
+  // Handle replanning from current trajectory
+  auto info = &planner_manager_->local_data_;
+  if (!fd_->static_state_) {
+    double plan_finish_time_exp = (ros::Time::now() - info->start_time_).toSec() + fp_->replan_time_;
+    if (plan_finish_time_exp > info->duration_) {
+      plan_finish_time_exp = info->duration_;
     }
+    Eigen::Vector3d start_exp = info->minco_traj_.getPos(plan_finish_time_exp);
+    path_next_goal.insert(path_next_goal.begin(), start_exp.cast<float>());
+  }
+
+  // Resample path to avoid too long segments
+  vector<Eigen::Vector3f> path_next_goal_tmp;
+  path_next_goal_tmp.push_back(path_next_goal[0]);
+  for (int i = 1; i < path_next_goal.size();) {
+    Eigen::Vector3f end_pt = path_next_goal_tmp.back();
+    if ((path_next_goal[i] - end_pt).norm() > 1.0) {
+      Eigen::Vector3f dir = (path_next_goal[i] - end_pt).normalized();
+      path_next_goal_tmp.push_back(end_pt + 1.0 * dir);
+    } else if ((path_next_goal[i] - end_pt).norm() < 0.01) {
+      i++;
+    } else {
+      path_next_goal_tmp.push_back(path_next_goal[i]);
+      i++;
+    }
+  }
+
+  expl_manager_->ed_->path_next_goal_.swap(path_next_goal_tmp);
+
+  // Plan trajectory
+  if (planner_manager_->planExploreTraj(expl_manager_->ed_->path_next_goal_, fd_->static_state_)) {
+    traj_utils::PolyTraj poly_traj_msg;
+    planner_manager_->polyTraj2ROSMsg(poly_traj_msg, info->start_time_);
+    fd_->newest_traj_ = poly_traj_msg;
+
+    traj_utils::PolyTraj poly_yaw_traj_msg;
+    planner_manager_->polyYawTraj2ROSMsg(poly_yaw_traj_msg, info->start_time_);
+    fd_->newest_yaw_traj_ = poly_yaw_traj_msg;
+
+    return SUCCEED;
+  } else {
+    ROS_ERROR("[RTH] Failed to plan trajectory");
+    return FAIL;
+  }
 }

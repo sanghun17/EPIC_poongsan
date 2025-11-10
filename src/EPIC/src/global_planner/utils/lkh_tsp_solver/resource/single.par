@@ -1,5 +1,5 @@
-PROBLEM_FILE = /home/hmcl/epic_ws/src/EPIC_poongsan/src/EPIC/src/global_planner/utils/lkh_tsp_solver/resource/single.tsp
+PROBLEM_FILE = /home/ml/EPIC_poongsan_ws/src/EPIC/src/global_planner/utils/lkh_tsp_solver/resource/single.tsp
 GAIN23 = NO
 MOVE_TYPE = 2
-OUTPUT_TOUR_FILE =/home/hmcl/epic_ws/src/EPIC_poongsan/src/EPIC/src/global_planner/utils/lkh_tsp_solver/resource/single.txt
+OUTPUT_TOUR_FILE =/home/ml/EPIC_poongsan_ws/src/EPIC/src/global_planner/utils/lkh_tsp_solver/resource/single.txt
 RUNS = 10
