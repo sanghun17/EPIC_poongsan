@@ -14,3 +14,6 @@ logs/
 .catkin_workspace
 *.pyc
 __pycache__/
+
+# External dependencies (built from source)
+src/vision_opencv/
