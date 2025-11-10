@@ -200,6 +200,79 @@ public:
     global_tour_pub_.publish(tour_marker_array);
   }
 
+  // Visualize tour with per-segment colors
+  void inline vizTourWithColors(const vector<Eigen::Vector3f> &path,
+                                const vector<bool> &segment_flags,
+                                VizColor color_false, VizColor color_true,
+                                string ns) {
+    // First, publish DELETEALL markers separately
+    MarkerArray clear_marker_array;
+    Marker clear_marker;
+    clear_marker.header.frame_id = "odom";
+    clear_marker.header.stamp = ros::Time::now();
+    clear_marker.action = Marker::DELETEALL;
+    clear_marker.ns = ns + "_path";
+    clear_marker_array.markers.push_back(clear_marker);
+    clear_marker.ns = ns + "_path_order";
+    clear_marker_array.markers.push_back(clear_marker);
+    global_tour_pub_.publish(clear_marker_array);
+
+    ros::Duration(0.001).sleep();
+
+    // Now publish the new markers with per-segment colors
+    MarkerArray tour_marker_array;
+    if (path.size() >= 2) {
+      for (int i = 0; i < path.size() - 1; i++) {
+        // Determine color for this segment
+        VizColor segment_color = (i < segment_flags.size() && segment_flags[i+1]) ? color_true : color_false;
+
+        // Create individual LINE_LIST marker for each segment
+        Marker segment_marker;
+        segment_marker.type = Marker::LINE_LIST;
+        segment_marker.header.frame_id = "odom";
+        segment_marker.header.stamp = ros::Time::now();
+        segment_marker.ns = ns + "_path";
+        segment_marker.id = i;
+        segment_marker.action = Marker::ADD;
+        segment_marker.scale.x = segment_marker.scale.y = segment_marker.scale.z = 0.1;
+        segment_marker.pose.orientation.w = 1.0;
+        SetColor(segment_color, 1.0f, segment_marker);
+
+        // Add segment endpoints
+        geometry_msgs::Point p1, p2;
+        p1.x = path[i].x();
+        p1.y = path[i].y();
+        p1.z = path[i].z();
+        p2.x = path[i + 1].x();
+        p2.y = path[i + 1].y();
+        p2.z = path[i + 1].z();
+        segment_marker.points.push_back(p1);
+        segment_marker.points.push_back(p2);
+
+        tour_marker_array.markers.push_back(segment_marker);
+
+        // Add text marker for node order
+        Marker text_marker;
+        text_marker.type = Marker::TEXT_VIEW_FACING;
+        text_marker.header.frame_id = "odom";
+        text_marker.header.stamp = ros::Time::now();
+        text_marker.ns = ns + "_path_order";
+        text_marker.id = i;
+        text_marker.action = Marker::ADD;
+        text_marker.scale.z = 0.7;
+        text_marker.pose.orientation.w = 1.0;
+        text_marker.pose.position.x = p2.x;
+        text_marker.pose.position.y = p2.y;
+        text_marker.pose.position.z = p2.z + 0.1;
+        text_marker.text = to_string(i + 1);
+        SetColor(VizColor::WHITE, 1.0f, text_marker);
+
+        tour_marker_array.markers.push_back(text_marker);
+      }
+    }
+    global_tour_pub_.publish(tour_marker_array);
+  }
+
   void inline vizBox(const TopoGraph::Ptr &topo_graph) {
     MarkerArray graph_marker_array;
     Marker boundary_marker, skeleton_edge, odom_edge, dead_arad_marker;
