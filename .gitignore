@@ -17,3 +17,6 @@ __pycache__/
 
 # External dependencies (built from source)
 src/vision_opencv/
+
+# Map files (large binary files)
+src/MARSIM/map_generator/resource/*.pcd
