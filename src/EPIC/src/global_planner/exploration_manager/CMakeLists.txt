@@ -39,6 +39,7 @@ include_directories(
   ${catkin_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/include
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS}
 )
 
 add_executable(exploration_node
@@ -49,6 +50,7 @@ add_executable(exploration_node
 
 target_link_libraries(exploration_node
   ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
   OpenMP::OpenMP_CXX
   epic_planner
 )
@@ -58,4 +60,5 @@ add_library(epic_planner
 )
 target_link_libraries(epic_planner
   ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
 )

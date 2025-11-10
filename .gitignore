@@ -1,0 +1,16 @@
+# IDE and Editor
+.vscode/
+.claude/
+
+# GitHub
+.github/
+
+# ROS build artifacts
+build/
+devel/
+install/
+logs/
+.catkin_tools/
+.catkin_workspace
+*.pyc
+__pycache__/
