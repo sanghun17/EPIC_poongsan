@@ -1,14 +1,58 @@
 <launch>
-  <arg name="map_name" value="garage" />
+  <!-- Static transforms for frame compatibility -->
+  <node pkg="tf" type="static_transform_publisher" name="odom_to_world"
+        args="0 0 0 0 0 0 odom world 100" />
 
+  <node pkg="tf" type="static_transform_publisher" name="odom_to_map"
+        args="0 0 0 0 0 0 odom map 100" />
+
+  <!-- Map configuration -->
+  <arg name="map_name" value="garage" />
   <arg name="config_file" default="$(arg map_name).yaml" />
 
+  <!-- Odometry topic (configure based on your odometry source) -->
+  <arg name="odom_topic" default="/quad_0/lidar_slam/odom" />
+
+  <!-- Trajectory/Waypoint server -->
+  <node pkg="waypoint_generator" name="waypoint_generator" type="waypoint_generator" output="screen">
+    <remap from="~odom" to="$(arg odom_topic)" />
+    <remap from="~goal" to="/move_base_simple/goal" />
+    <remap from="~traj_start_trigger" to="/traj_start_trigger" />
+    <param name="waypoint_type" value="point" />
+  </node>
+
+  <!-- Odometry visualization -->
+  <node pkg="odom_visualization" name="quad0_odom_visualization" type="odom_visualization" output="screen">
+    <remap from="~odom" to="$(arg odom_topic)" />
+    <param name="init_x" value="0.0" />
+    <param name="init_y" value="0.0" />
+    <param name="init_z" value="1.0" />
+    <param name="color/a" value="1.0" />
+    <param name="color/r" value="0.0" />
+    <param name="color/g" value="1.0" />
+    <param name="color/b" value="1.0" />
+    <param name="covariance_scale" value="100.0" />
+    <param name="robot_scale" value="1.0" />
+    <param name="quadrotor_name" value="quad0" />
+    <param name="drone_id" value="0" />
+    <param name="mesh_resource" value="package://odom_visualization/meshes/yunque.dae" />
+  </node>
+
+  <!-- EPIC exploration algorithm -->
   <include file="$(find epic_planner)/launch/algorithm.xml">
     <arg name="config_file" value="$(arg config_file)" />
   </include>
+
+  <!-- Trajectory server -->
   <node pkg="plan_manage" name="traj_server" type="traj_server" output="screen">
     <remap from="/position_cmd" to="/planning/pos_cmd" />
   </node>
-  <include file="$(find epic_planner)/launch/simulation_$(arg map_name).launch"/>
-  
+
+  <!-- RViz visualization -->
+  <include file="$(find epic_planner)/launch/rviz.launch" />
+
+  <!-- Note: For real hardware on Desktop, launch your sensor/SLAM system separately:
+       - FAST-LIVO2 or other SLAM providing odometry on /quad_0/lidar_slam/odom
+       - Point cloud on the topic configured in garage.yaml
+       This is adapted for Desktop without simulation (mars_drone_sim) -->
 </launch>
