@@ -1,11 +1,9 @@
 #include <ros/ros.h>
 #include <geometry_msgs/Point.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <nav_msgs/Path.h>
 #include <visualization_msgs/MarkerArray.h>
 #include <trajectory_msgs/MultiDOFJointTrajectory.h>
-#include <trajectory_msgs/MultiDOFJointTrajectoryPoint.h>
-#include <geometry_msgs/Transform.h>
-#include <geometry_msgs/Twist.h>
 #include <traj_utils/PolyTraj.h>
 #include <gcopter/trajectory.hpp>
 
@@ -17,6 +15,7 @@ private:
     // Publishers for different sampling rates
     ros::Publisher discrete_path_pub_;        // nav_msgs/Path
     ros::Publisher discrete_points_pub_;      // visualization_msgs/MarkerArray
+    ros::Publisher discrete_poses_pub_;       // geometry_msgs/PoseStamped array
     ros::Publisher multidof_traj_pub_;        // trajectory_msgs/MultiDOFJointTrajectory
     
     std::shared_ptr<Trajectory<7>> current_traj_;
@@ -35,22 +34,18 @@ public:
         nh_.param("auto_duration", auto_duration_, true);      // Use full traj duration
         
         // Publishers
-        discrete_path_pub_ = nh_.advertise<nav_msgs::Path>("/planning/trajectory_discrete", 10);
-        discrete_points_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/planning/trajectory_waypoints", 10);
-        multidof_traj_pub_ = nh_.advertise<trajectory_msgs::MultiDOFJointTrajectory>("/planning/trajectory_multidof", 10);
-
+        discrete_path_pub_ = nh_.advertise<nav_msgs::Path>("/trajectory/discrete_path", 10);
+        discrete_points_pub_ = nh_.advertise<visualization_msgs::MarkerArray>("/trajectory/discrete_points", 10);
+        discrete_poses_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("/trajectory/discrete_poses", 100);
+        multidof_traj_pub_ = nh_.advertise<trajectory_msgs::MultiDOFJointTrajectory>("/trajectory/multidof_trajectory", 10);
         
         // Subscribers
         traj_sub_ = nh_.subscribe("/planning/trajectory", 10, &TrajectoryDiscreteSampler::trajectoryCallback, this);
         
-        ROS_INFO("[Trajectory Sampler] Initialized with:");
-        ROS_INFO("  - Sample interval: %.3f seconds", sample_interval_);
-        ROS_INFO("  - Total duration: %.3f seconds", total_duration_);
-        ROS_INFO("  - Auto duration: %s", auto_duration_ ? "true" : "false");
-        ROS_INFO("  - Publishing to 3 topics:");
-        ROS_INFO("    * /planning/trajectory_discrete (nav_msgs/Path)");
-        ROS_INFO("    * /planning/trajectory_waypoints (visualization_msgs/MarkerArray)");
-        ROS_INFO("    * /planning/trajectory_multidof (trajectory_msgs/MultiDOFJointTrajectory)");
+        // ROS_INFO("[Trajectory Sampler] Initialized with:");
+        // ROS_INFO("  - Sample interval: %.3f seconds", sample_interval_);
+        // ROS_INFO("  - Total duration: %.3f seconds", total_duration_);
+        // ROS_INFO("  - Auto duration: %s", auto_duration_ ? "true" : "false");
     }
     
     void trajectoryCallback(const traj_utils::PolyTrajPtr& msg) {
@@ -93,7 +88,7 @@ public:
         // Prepare messages
         nav_msgs::Path path_msg;
         path_msg.header.stamp = ros::Time::now();
-        path_msg.header.frame_id = "odom";
+        path_msg.header.frame_id = "world";
         
         visualization_msgs::MarkerArray marker_array;
         visualization_msgs::Marker points_marker;
@@ -104,12 +99,13 @@ public:
         points_marker.action = visualization_msgs::Marker::ADD;
         points_marker.color.r = 0.0; points_marker.color.g = 1.0; points_marker.color.b = 0.0; points_marker.color.a = 1.0;
         points_marker.scale.x = 0.1; points_marker.scale.y = 0.1; points_marker.scale.z = 0.1;
-        
+
         // Prepare MultiDOFJointTrajectory message
         trajectory_msgs::MultiDOFJointTrajectory multidof_msg;
-        multidof_msg.header = path_msg.header;
-        multidof_msg.joint_names.push_back("base_link"); // Joint name for the UAV base
-        
+        multidof_msg.header.stamp = ros::Time::now();
+        multidof_msg.header.frame_id = "world";
+        multidof_msg.joint_names.push_back("base_link");
+
         int sample_count = 0;
         
         // Sample at T-second intervals for N seconds
@@ -130,9 +126,8 @@ public:
             pose_stamped.pose.position.z = pos(2);
             
             // Calculate yaw from velocity (optional)
-            double yaw = 0.0;
             if (vel.head<2>().norm() > 0.1) {
-                yaw = atan2(vel(1), vel(0));
+                double yaw = atan2(vel(1), vel(0));
                 pose_stamped.pose.orientation.z = sin(yaw * 0.5);
                 pose_stamped.pose.orientation.w = cos(yaw * 0.5);
             } else {
@@ -148,43 +143,45 @@ public:
             point.z = pos(2);
             points_marker.points.push_back(point);
             
+            // Publish individual pose
+            discrete_poses_pub_.publish(pose_stamped);
+
             // Create MultiDOFJointTrajectoryPoint
             trajectory_msgs::MultiDOFJointTrajectoryPoint multidof_point;
-            multidof_point.time_from_start = ros::Duration(t);
-            
-            // Transform (position + orientation)
+
+            // Transform (position and orientation)
             geometry_msgs::Transform transform;
             transform.translation.x = pos(0);
             transform.translation.y = pos(1);
             transform.translation.z = pos(2);
-            transform.rotation.x = 0.0;
-            transform.rotation.y = 0.0;
-            transform.rotation.z = sin(yaw * 0.5);
-            transform.rotation.w = cos(yaw * 0.5);
+            transform.rotation = pose_stamped.pose.orientation;
             multidof_point.transforms.push_back(transform);
-            
-            // Velocity (linear + angular)
+
+            // Velocity (linear and angular)
             geometry_msgs::Twist velocity;
             velocity.linear.x = vel(0);
             velocity.linear.y = vel(1);
             velocity.linear.z = vel(2);
             velocity.angular.x = 0.0;
             velocity.angular.y = 0.0;
-            velocity.angular.z = 0.0; // Can be computed from velocity direction change if needed
+            velocity.angular.z = 0.0;
             multidof_point.velocities.push_back(velocity);
-            
-            // Acceleration (linear + angular)
+
+            // Acceleration (linear and angular)
             geometry_msgs::Twist acceleration;
             acceleration.linear.x = acc(0);
             acceleration.linear.y = acc(1);
             acceleration.linear.z = acc(2);
             acceleration.angular.x = 0.0;
             acceleration.angular.y = 0.0;
-            acceleration.angular.z = 0.0; // Can be computed from acceleration direction change if needed
+            acceleration.angular.z = 0.0;
             multidof_point.accelerations.push_back(acceleration);
-            
+
+            // Time from start
+            multidof_point.time_from_start = ros::Duration(t);
+
             multidof_msg.points.push_back(multidof_point);
-            
+
             sample_count++;
         }
         
@@ -197,7 +194,6 @@ public:
         
         // ROS_INFO("[Trajectory Sampler] Sampled %d points at %.3fs intervals over %.3fs duration", 
         //          sample_count, sample_interval_, sampling_duration);
-        // ROS_INFO("[Trajectory Sampler] Published to 3 topics: trajectory_discrete, trajectory_waypoints, trajectory_multidof");
     }
     
     // Dynamic reconfigure function (can be called via service)
@@ -206,10 +202,10 @@ public:
         total_duration_ = duration;
         auto_duration_ = auto_dur;
         
-        // ROS_INFO("[Trajectory Sampler] Updated parameters:");
-        // ROS_INFO("  - Sample interval: %.3f seconds", sample_interval_);
-        // ROS_INFO("  - Total duration: %.3f seconds", total_duration_);
-        // ROS_INFO("  - Auto duration: %s", auto_duration_ ? "true" : "false");
+        ROS_INFO("[Trajectory Sampler] Updated parameters:");
+        ROS_INFO("  - Sample interval: %.3f seconds", sample_interval_);
+        ROS_INFO("  - Total duration: %.3f seconds", total_duration_);
+        ROS_INFO("  - Auto duration: %s", auto_duration_ ? "true" : "false");
         
         // Re-sample current trajectory if available
         if (current_traj_) {
