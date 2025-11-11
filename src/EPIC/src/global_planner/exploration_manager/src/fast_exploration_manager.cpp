@@ -54,6 +54,7 @@ void FastExplorationManager::initialize(
   nh.getParam("viewpoint_param/local_viewpoint_num", ep_->local_viewpoint_num_);
   nh.getParam("global_planning/w_vdir", ep_->w_vdir_);
   nh.getParam("global_planning/w_yawdir", ep_->w_yawdir_);
+  nh.param("fsm/max_segment_length", ep_->max_segment_length_, 3.0);
   Eigen::Vector3d origin, size;
   ofstream par_file(ep_->tsp_dir_ + "/single.par");
   par_file << "PROBLEM_FILE = " << ep_->tsp_dir_ << "/single.tsp\n";
@@ -290,8 +291,11 @@ int FastExplorationManager::planGlobalPath(const Eigen::Vector3d &pos,
 
   if (viewpoint_reachable.size() == 1) {
     ed_->global_tour_.clear();
+
     ed_->global_tour_.emplace_back(pos.cast<float>());
+
     ed_->global_tour_.emplace_back(viewpoint_reachable.front()->center_);
+
     planner_manager_->local_data_.end_yaw_ = viewpoint_reachable.front()->yaw_;
     planner_manager_->topo_graph_->removeNodes(viewpoints);
     return SUCCEED;
@@ -350,6 +354,7 @@ int FastExplorationManager::planGlobalPath(const Eigen::Vector3d &pos,
   // if ((end_tsp - start_tsp).toSec() * 1000 > 100)
   //   exit(0);
   ed_->global_tour_.clear();
+
   for (auto &i : indices) {
     if (i == 0) {
       ed_->global_tour_.push_back(
@@ -363,13 +368,324 @@ int FastExplorationManager::planGlobalPath(const Eigen::Vector3d &pos,
 
   ros::Time end = ros::Time::now();
   planner_manager_->topo_graph_->removeNodes(viewpoints);
-  planner_manager_->graph_visualizer_->vizTour(ed_->global_tour_, VizColor::RED,
-                                               "global");
+
+  // Visualize the tour
+  planner_manager_->graph_visualizer_->vizTour(ed_->global_tour_, VizColor::BLUE, "global");
 
   planner_manager_->local_data_.end_yaw_ =
       viewpoint_reachable[indices[1] - 1]->yaw_;
   updateGoalNode();
   return SUCCEED;
+}
+
+int FastExplorationManager::planGoalPath(const Eigen::Vector3d &goal_pos, double goal_yaw) {
+  ros::Time start = ros::Time::now();
+
+  ROS_INFO("\033[34m[Goal Planning] Start planning to goal: (%.2f, %.2f, %.2f), yaw: %.2f\033[0m",
+           goal_pos.x(), goal_pos.y(), goal_pos.z(), goal_yaw);
+
+  // Step 1: Create temporary goal node
+  TopoNode::Ptr goal_node = std::make_shared<TopoNode>();
+  goal_node->center_ = goal_pos.cast<float>();
+  goal_node->yaw_ = goal_yaw;
+
+  // Step 2: Generate and insert frontier viewpoints as stepping stones
+  // This helps when goal is in/near unknown regions - frontiers provide intermediate nodes
+  // closer to the goal than distant topology skeleton nodes
+  vector<TopoNode::Ptr> viewpoints;
+  frontier_manager_ptr_->generateTSPViewpoints(
+      planner_manager_->topo_graph_->odom_node_->center_, viewpoints);
+
+  if (!viewpoints.empty()) {
+    planner_manager_->topo_graph_->insertNodes(viewpoints, false);
+    ROS_INFO("\033[36m[Goal Planning] Inserted %lu frontier viewpoints as stepping stones\033[0m",
+             viewpoints.size());
+  }
+
+  // Step 3: Get current state
+  Eigen::Vector3f start_pos = planner_manager_->topo_graph_->odom_node_->center_;
+  TopoNode::Ptr start_node = planner_manager_->topo_graph_->odom_node_;
+
+  // Step 4: Connect goal node to topology graph - ONLY verified connections (REACH_END)
+  // No optimistic connections to avoid paths through known walls
+  vector<TopoNode::Ptr> pre_nbrs;
+  planner_manager_->topo_graph_->getPreNbrs(goal_node, pre_nbrs);
+
+  // Try both nearby skeleton nodes AND frontier viewpoints for connections
+  vector<TopoNode::Ptr> connection_candidates = pre_nbrs;
+  connection_candidates.insert(connection_candidates.end(), viewpoints.begin(), viewpoints.end());
+
+  ROS_INFO("[Goal Planning] Trying to connect goal to %d nodes (%d neighbors + %d frontiers)",
+           (int)connection_candidates.size(), (int)pre_nbrs.size(), (int)viewpoints.size());
+
+  int num_connected = 0;
+  for (auto& nbr : connection_candidates) {
+    vector<Eigen::Vector3f> path;
+    Eigen::Vector3f goal_pos_f = goal_pos.cast<float>();
+    Eigen::Vector3f nbr_center_f = nbr->center_;
+
+    // Try collision-free path verification with ParallelBubbleAstar
+    int res = planner_manager_->parallel_path_finder_->search(
+        goal_pos_f, nbr_center_f, path, 1e-3);
+
+    double cost;
+
+    if (res == ParallelBubbleAstar::REACH_END) {
+      // ONLY accept verified collision-free connections
+      cost = 0.0;
+      for (size_t i = 0; i < path.size() - 1; ++i) {
+        cost += (path[i] - path[i + 1]).norm();
+      }
+      cost /= (ep_->v_max_ / 2.0);  // Time cost
+      ROS_INFO("\033[32m[Goal Planning] Verified connection to node at (%.2f, %.2f, %.2f), cost: %.2f\033[0m",
+               nbr->center_.x(), nbr->center_.y(), nbr->center_.z(), cost);
+
+      // Add bidirectional edge
+      goal_node->neighbors_.insert(nbr);
+      goal_node->weight_[nbr] = cost;
+      goal_node->paths_[nbr] = path;
+
+      nbr->neighbors_.insert(goal_node);
+      nbr->weight_[goal_node] = cost;
+      nbr->paths_[goal_node] = path;
+
+      num_connected++;
+
+    } else {
+      // Reject ALL non-verified connections (NO_PATH, TIME_OUT, START_FAIL, END_FAIL)
+      // This eliminates optimistic connections through potentially known walls
+      const char* reason;
+      if (res == ParallelBubbleAstar::NO_PATH) reason = "known obstacle";
+      else if (res == ParallelBubbleAstar::START_FAIL) reason = "start in collision";
+      else if (res == ParallelBubbleAstar::END_FAIL) reason = "end in collision";
+      else if (res == ParallelBubbleAstar::TIME_OUT) reason = "timeout (rejected - no optimistic connections)";
+      else reason = "unknown error";
+
+      // Only log at debug level to reduce spam
+      ROS_DEBUG("[Goal Planning] Skipping connection to (%.2f, %.2f, %.2f) - %s",
+                nbr->center_.x(), nbr->center_.y(), nbr->center_.z(), reason);
+    }
+  }
+
+  ROS_INFO("[Goal Planning] Connected goal to %d topology nodes (verified only)", num_connected);
+
+  // FALLBACK: If goal is not reachable, navigate to closest frontier instead
+  if (num_connected == 0) {
+    ROS_WARN("\033[33m[Goal Planning] Goal not reachable! Fallback: Navigate to closest frontier\033[0m");
+
+    // Find closest frontier to goal (before removing viewpoints!)
+    if (viewpoints.empty()) {
+      ROS_ERROR("[Goal Planning] No frontiers available for fallback!");
+      return NO_FRONTIER;
+    }
+
+    Eigen::Vector3f goal_pos_f = goal_pos.cast<float>();
+    double min_dist = std::numeric_limits<double>::max();
+    TopoNode::Ptr closest_frontier = nullptr;
+    for (auto& vp : viewpoints) {
+      double dist = (vp->center_ - goal_pos_f).norm();
+      if (dist < min_dist) {
+        min_dist = dist;
+        closest_frontier = vp;
+      }
+    }
+
+    ROS_INFO("\033[33m[Goal Planning] Redirecting to closest frontier at (%.2f, %.2f, %.2f), dist: %.2fm from goal\033[0m",
+             closest_frontier->center_.x(), closest_frontier->center_.y(), closest_frontier->center_.z(), min_dist);
+
+    // Now plan a path to the closest frontier instead of the goal
+    // Use the closest frontier as the new goal
+    goal_node->center_ = closest_frontier->center_;
+    goal_node->yaw_ = closest_frontier->yaw_;
+
+    // Try connecting to this frontier position
+    vector<TopoNode::Ptr> frontier_candidates;
+    planner_manager_->topo_graph_->getPreNbrs(goal_node, frontier_candidates);
+
+    // Also try connecting to other nearby skeleton nodes
+    for (auto& nbr : frontier_candidates) {
+      vector<Eigen::Vector3f> path;
+      int res = planner_manager_->parallel_path_finder_->search(
+          goal_node->center_, nbr->center_, path, 1e-3);
+
+      if (res == ParallelBubbleAstar::REACH_END) {
+        double cost = 0.0;
+        for (size_t i = 0; i < path.size() - 1; ++i) {
+          cost += (path[i] - path[i + 1]).norm();
+        }
+        cost /= (ep_->v_max_ / 2.0);
+
+        goal_node->neighbors_.insert(nbr);
+        goal_node->weight_[nbr] = cost;
+        goal_node->paths_[nbr] = path;
+
+        nbr->neighbors_.insert(goal_node);
+        nbr->weight_[goal_node] = cost;
+        nbr->paths_[goal_node] = path;
+
+        num_connected++;
+        ROS_INFO("\033[32m[Goal Planning] Connected frontier fallback to node at (%.2f, %.2f, %.2f)\033[0m",
+                 nbr->center_.x(), nbr->center_.y(), nbr->center_.z());
+      }
+    }
+
+    if (num_connected == 0) {
+      ROS_ERROR("[Goal Planning] Even closest frontier is unreachable!");
+      // Cleanup
+      if (!viewpoints.empty()) {
+        planner_manager_->topo_graph_->removeNodes(viewpoints);
+      }
+      return FAIL;
+    }
+
+    ROS_INFO("[Goal Planning] Frontier fallback connected to %d nodes", num_connected);
+  }
+
+  // Step 4: A* search on topology graph
+  vector<TopoNode::Ptr> topo_path;
+  ros::Time search_start = ros::Time::now();
+  bool search_success = planner_manager_->topo_graph_->graphSearch(
+      start_node, goal_node, topo_path, 0.1);  // 100ms timeout
+  ros::Time search_end = ros::Time::now();
+
+  std_msgs::Float32 timing_msg;
+  timing_msg.data = (search_end - search_start).toSec() * 1000;
+  topo_graph_search_cost_pub_.publish(timing_msg);
+
+  if (!search_success || topo_path.empty()) {
+    ROS_WARN("[Goal Planning] A* search failed on topology graph!");
+
+    // Cleanup: remove goal node connections
+    for (auto& nbr : connection_candidates) {
+      nbr->neighbors_.erase(goal_node);
+      nbr->weight_.erase(goal_node);
+      nbr->paths_.erase(goal_node);
+    }
+
+    // Cleanup: remove frontier viewpoints
+    if (!viewpoints.empty()) {
+      planner_manager_->topo_graph_->removeNodes(viewpoints);
+    }
+
+    return FAIL;
+  }
+
+  ROS_INFO("\033[32m[Goal Planning] A* found path with %lu nodes\033[0m", topo_path.size());
+
+  // Step 5: Build global_tour_ from topology path
+  ed_->global_tour_.clear();
+
+  ed_->global_tour_.push_back(start_pos);
+
+  for (size_t i = 1; i < topo_path.size(); ++i) {
+    ed_->global_tour_.push_back(topo_path[i]->center_);
+  }
+
+  // Add final goal position
+  ed_->global_tour_.push_back(goal_pos.cast<float>());
+
+  // Set end yaw
+  planner_manager_->local_data_.end_yaw_ = goal_yaw;
+
+  // Step 6: Simplify global_tour using greedy visibility checks
+  simplifyGlobalTour();
+
+  // Step 7: Cleanup - remove goal node connections and frontier viewpoints
+  for (auto& nbr : connection_candidates) {
+    nbr->neighbors_.erase(goal_node);
+    nbr->weight_.erase(goal_node);
+    nbr->paths_.erase(goal_node);
+  }
+
+  // Remove frontier viewpoints (stepping stones no longer needed)
+  if (!viewpoints.empty()) {
+    planner_manager_->topo_graph_->removeNodes(viewpoints);
+    ROS_INFO("[Goal Planning] Removed %lu frontier stepping stones", viewpoints.size());
+  }
+
+  // Visualize the tour
+  planner_manager_->graph_visualizer_->vizTour(ed_->global_tour_, VizColor::BLUE, "goal");
+
+  ros::Time end = ros::Time::now();
+  ROS_INFO("\033[32m[Goal Planning] Total planning time: %.2f ms\033[0m",
+           (end - start).toSec() * 1000);
+
+  return SUCCEED;
+}
+
+void FastExplorationManager::simplifyGlobalTour() {
+  if (ed_->global_tour_.size() <= 2) {
+    // No simplification needed for start-goal only
+    return;
+  }
+
+  ros::Time t_start = ros::Time::now();
+  int original_size = ed_->global_tour_.size();
+
+  vector<Eigen::Vector3f> simplified_tour;
+
+  simplified_tour.push_back(ed_->global_tour_[0]);  // Always keep start
+
+  const double MAX_SEGMENT_LENGTH = ep_->max_segment_length_;
+  int collision_checks = 0;
+
+  int anchor_idx = 0;
+
+  while (anchor_idx < ed_->global_tour_.size() - 1) {
+    int furthest_visible = anchor_idx + 1;  // At least move to next node
+
+    // Greedy search: find furthest visible node from anchor
+    for (int test_idx = anchor_idx + 2; test_idx < ed_->global_tour_.size(); ++test_idx) {
+      Eigen::Vector3f anchor_pos = ed_->global_tour_[anchor_idx];
+      Eigen::Vector3f test_pos = ed_->global_tour_[test_idx];
+
+      // Check segment length constraint first
+      double segment_length = (test_pos - anchor_pos).norm();
+      if (segment_length > MAX_SEGMENT_LENGTH) {
+        break;  // Too far, stop searching
+      }
+
+      // Test visibility using parallel_path_finder
+      vector<Eigen::Vector3f> path;
+      collision_checks++;
+      int res = planner_manager_->parallel_path_finder_->search(
+          anchor_pos, test_pos, path, 1e-3);
+
+      if (res == ParallelBubbleAstar::REACH_END) {
+        // Visible! Update furthest
+        furthest_visible = test_idx;
+        // Continue testing further nodes (don't break)
+      } else {
+        // Hit obstacle, stop searching (greedy: can't skip further if blocked here)
+        break;
+      }
+    }
+
+    // Add the furthest visible node
+    if (furthest_visible < ed_->global_tour_.size() - 1) {
+      simplified_tour.push_back(ed_->global_tour_[furthest_visible]);
+    }
+
+    // Move anchor to furthest visible
+    anchor_idx = furthest_visible;
+  }
+
+  // Always add final goal
+  simplified_tour.push_back(ed_->global_tour_.back());
+
+  // Update global_tour_
+  ed_->global_tour_ = simplified_tour;
+
+  ros::Time t_end = ros::Time::now();
+  ROS_INFO("\033[33m[Path Simplification] Reduced path from %d to %lu nodes, %d collision checks, %.2f ms\033[0m",
+           original_size, simplified_tour.size(), collision_checks,
+           (t_end - t_start).toSec() * 1000.0);
+
+  // Print segment lengths for debugging
+  for (size_t i = 1; i < simplified_tour.size(); ++i) {
+    double seg_length = (simplified_tour[i] - simplified_tour[i-1]).norm();
+    ROS_INFO("  Segment %lu: %.2f m", i, seg_length);
+  }
 }
 
 void FastExplorationManager::solveLHK(Eigen::MatrixXd &cost_mat,

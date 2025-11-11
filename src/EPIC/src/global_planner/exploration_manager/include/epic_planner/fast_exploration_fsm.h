@@ -27,6 +27,7 @@
 #include <vector>
 #include <visualization_msgs/Marker.h>
 #include <std_msgs/Float32.h>
+#include <epic_planner/GoalService.h>
 
 using Eigen::Vector3d;
 using std::shared_ptr;
@@ -41,7 +42,7 @@ class PlanningVisualization;
 struct FSMParam;
 struct FSMData;
 
-enum EXPL_STATE { INIT, WAIT_TRIGGER, PLAN_TRAJ, CAUTION, EXEC_TRAJ, FINISH, LAND };
+enum EXPL_STATE { INIT, WAIT_TRIGGER, PLAN_TRAJ_EXP, PLAN_TRAJ_RTH, CAUTION, EXEC_TRAJ, FINISH, LAND };
 
 class FastExplorationFSM {
 private:
@@ -55,16 +56,14 @@ private:
   EXPL_STATE state_;
 
   bool classic_;
-  bool do_global_search_;  // 글로벌 검색 플래그
-  bool do_local_search_;  // 로컬 검색 플래그
-  ros::Time last_plan_traj_time_;  // 마지막 PLAN_TRAJ 진입 시간
 
   /* ROS utils */
   ros::NodeHandle node_;
-  ros::Timer exec_timer_, global_path_update_timer_, local_planning_timer_;
+  ros::Timer exec_timer_, global_path_update_timer_;
   ros::Subscriber trigger_sub_, map_update_sub_, battary_sub_;
   ros::Publisher stop_pub_, new_pub_, replan_pub_, poly_traj_pub_, heartbeat_pub_, time_cost_pub_, poly_yaw_traj_pub_, static_pub_, state_pub_,
   land_pub_;
+  ros::ServiceServer srv_goal_;
   
   // Global planning timing publishers
   ros::Publisher update_topo_skeleton_cost_pub_, update_odom_vertex_cost_pub_, vp_cluster_cost_pub_, 
@@ -83,17 +82,24 @@ private:
   shared_ptr<message_filters::Subscriber<nav_msgs::Odometry>> odom_sub_;
   void CloudOdomCallback(const sensor_msgs::PointCloud2ConstPtr &msg, const nav_msgs::Odometry::ConstPtr &odom_);
 
+  /* goal-directed navigation */
+  Eigen::Vector4d goal_rth_;  // x, y, z, yaw
+  bool has_goal_rth_;
+  double goal_tolerance_;
+
   /* helper functions */
   int callExplorationPlanner();
+  int callGoalPlanner();
   void transitState(EXPL_STATE new_state, string pos_call, bool red = false);
   void battaryCallback(const sensor_msgs::BatteryStateConstPtr &msg);
+  bool goalServiceCallback(epic_planner::GoalService::Request& req,
+                          epic_planner::GoalService::Response& res);
   /* ROS functions */
   void FSMCallback(const ros::TimerEvent &e);
   // void PlannerDebugFSMCallback(const ros::TimerEvent &e);
   void safetyCallback(const ros::TimerEvent &e);
   void updateTopoAndGlobalPath();
   void globalPathUpdateCallback(const ros::TimerEvent &e);
-  void localPlanningCallback(const ros::TimerEvent &e);
   void triggerCallback(const nav_msgs::PathConstPtr &msg);
   void odometryCallback(const nav_msgs::OdometryConstPtr &msg);
   void stopTraj();

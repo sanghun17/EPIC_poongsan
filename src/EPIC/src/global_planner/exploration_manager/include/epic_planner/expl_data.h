@@ -66,6 +66,7 @@ struct ExplorationParam {
   double w_vdir_, w_yawdir_;
   bool view_graph_;
   string tsp_dir_; // resource dir of tsp solver
+  double max_segment_length_; // maximum segment length for path simplification
 };
 
 } // namespace fast_planner

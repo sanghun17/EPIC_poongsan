@@ -83,3 +83,6 @@ RelCostTol: 1.0e-6
 yaw_max_vel: 4.0
 yaw_rho_vis: 10000.0
 yaw_time_fwd: 3.0
+# FSM param
+fsm/goal_tolerance: 0.2
+fsm/max_segment_length: 99.0

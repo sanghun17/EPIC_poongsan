@@ -19,7 +19,7 @@ void FastExplorationFSM::pubState() {
   state_marker.color.r = 1.0;
   state_marker.color.a = 1.0;
   state_marker.text = fd_->state_str_[int(state_)];
-  state_marker.header.frame_id = "odom";
+  state_marker.header.frame_id = "world";
   state_marker.header.stamp = ros::Time::now();
 
   state_pub_.publish(state_marker);
@@ -42,45 +42,21 @@ int FastExplorationFSM::callExplorationPlanner() {
   }
   vector<Eigen::Vector3f> path_next_goal;
 
-  // 글로벌 검색 조건부 실행
-  if (do_global_search_) {
-    // Measure fast searcher search time
-    ros::Time fast_search_start = ros::Time::now();
-    int res = planner_manager_->fast_searcher_->search(planner_manager_->topo_graph_->odom_node_, fd_->odom_vel_, expl_manager_->ed_->next_goal_node_,
-                                                       0.2, path_next_goal);
-    ros::Time fast_search_end = ros::Time::now();
-    double fast_search_time = (fast_search_end - fast_search_start).toSec() * 1000.0;
-    
-    // Publish fast searcher search cost
-    std_msgs::Float32 fast_search_msg;
-    fast_search_msg.data = fast_search_time;
-    fast_searcher_search_cost_pub_.publish(fast_search_msg);
-    
-    if (res == ParallelBubbleAstar::NO_PATH) {
-      ROS_ERROR("ExplorationPlanner: No path to goal");
-      return FAIL;
+  int res = planner_manager_->fast_searcher_->search(planner_manager_->topo_graph_->odom_node_, fd_->odom_vel_, expl_manager_->ed_->next_goal_node_,
+                                                     0.2, path_next_goal);
+  if (res == ParallelBubbleAstar::NO_PATH) {
+    ROS_ERROR("ExplorationPlanner: No path to goal");
+    return FAIL;
 
-    } else if (res == ParallelBubbleAstar::START_FAIL) {
-      ROS_ERROR("ExplorationPlanner: Start point in occ");
-      return START_FAIL;
-    } else if (res == ParallelBubbleAstar::END_FAIL) {
-      ROS_ERROR("ExplorationPlanner: End point in occ");
-      return FAIL;
-    } else if (res == ParallelBubbleAstar::TIME_OUT) {
-      ROS_ERROR("ExplorationPlanner: Time out");
-      return FAIL;
-    }
-    do_global_search_ = false;
-
-    ROS_INFO("Global search executed (new path found)");
-  } else {
-    // 기존 글로벌 경로 재사용
-    if (expl_manager_->ed_->path_next_goal_.empty()) {
-      ROS_ERROR("No existing global path to reuse");
-      return FAIL;
-    }
-    path_next_goal = expl_manager_->ed_->path_next_goal_;
-    ROS_INFO("Global search skipped (reusing existing path)");
+  } else if (res == ParallelBubbleAstar::START_FAIL) {
+    ROS_ERROR("ExplorationPlanner: Start point in occ");
+    return START_FAIL;
+  } else if (res == ParallelBubbleAstar::END_FAIL) {
+    ROS_ERROR("ExplorationPlanner: End point in occ");
+    return FAIL;
+  } else if (res == ParallelBubbleAstar::TIME_OUT) {
+    ROS_ERROR("ExplorationPlanner: Time out");
+    return FAIL;
   }
 
   auto info = &planner_manager_->local_data_;
@@ -109,32 +85,16 @@ int FastExplorationFSM::callExplorationPlanner() {
     }
   }
   expl_manager_->ed_->path_next_goal_.swap(path_next_goal_tmp);
-  
-  // 로컬 플래닝 조건부 실행
-  if (do_local_search_) {
-    if (planner_manager_->planExploreTraj(expl_manager_->ed_->path_next_goal_, fd_->static_state_)) {
-      traj_utils::PolyTraj poly_traj_msg;
-      planner_manager_->polyTraj2ROSMsg(poly_traj_msg, info->start_time_);
-      fd_->newest_traj_ = poly_traj_msg;
-      traj_utils::PolyTraj poly_yaw_traj_msg;
-      planner_manager_->polyYawTraj2ROSMsg(poly_yaw_traj_msg, info->start_time_);
-      fd_->newest_yaw_traj_ = poly_yaw_traj_msg;
-      do_local_search_ = false;
-      ROS_INFO("Local planning executed (new trajectory generated)");
-      return SUCCEED;
-    } else {
-      ROS_ERROR("Local planning failed");
-      return FAIL;
-    }
-    do_local_search_ = false;
-  } else {
-    // 로컬 플래닝 스킵 - 기존 궤적 재사용
-    if (fd_->newest_traj_.coef_x.empty()) {
-      ROS_ERROR("No existing trajectory to reuse");
-      return FAIL;
-    }
-    ROS_INFO("Local planning skipped (reusing existing trajectory)");
+  if (planner_manager_->planExploreTraj(expl_manager_->ed_->path_next_goal_, fd_->static_state_)) {
+    traj_utils::PolyTraj poly_traj_msg;
+    planner_manager_->polyTraj2ROSMsg(poly_traj_msg, info->start_time_);
+    fd_->newest_traj_ = poly_traj_msg;
+    traj_utils::PolyTraj poly_yaw_traj_msg;
+    planner_manager_->polyYawTraj2ROSMsg(poly_yaw_traj_msg, info->start_time_);
+    fd_->newest_yaw_traj_ = poly_yaw_traj_msg;
     return SUCCEED;
+  } else {
+    return FAIL;
   }
 }
 
@@ -147,7 +107,7 @@ void FastExplorationFSM::triggerCallback(const nav_msgs::PathConstPtr &msg) {
   fd_->trigger_ = true;
   cout << "Triggered!" << endl;
   total_time_ = ros::Time::now().toSec();
-  transitState(PLAN_TRAJ, "triggerCallback");
+  transitState(PLAN_TRAJ_EXP, "triggerCallback");
 }
 
 void FastExplorationFSM::CloudOdomCallback(const sensor_msgs::PointCloud2ConstPtr &msg, const nav_msgs::Odometry::ConstPtr &odom_) {
@@ -156,7 +116,8 @@ void FastExplorationFSM::CloudOdomCallback(const sensor_msgs::PointCloud2ConstPt
   double collision_time;
   bool safe = planner_manager_->checkTrajCollision(collision_time);
   if (!safe) {
-    transitState(PLAN_TRAJ, "safetyCallback: not safe, time:" + to_string(collision_time), true);
+    EXPL_STATE next_state = has_goal_rth_ ? PLAN_TRAJ_RTH : PLAN_TRAJ_EXP;
+    transitState(next_state, "safetyCallback: not safe, time:" + to_string(collision_time), true);
     if (collision_time < fp_->replan_time_ + 0.2)
       stopTraj();
   }
@@ -185,14 +146,6 @@ void FastExplorationFSM::CloudOdomCallback(const sensor_msgs::PointCloud2ConstPt
   ROS_INFO_STREAM_THROTTLE(1.0, "cloud odom callback cost: " << "ikd-tree insert:" << (t2 - t1).toSec() * 1000 << "ms  "
                                                              << "update frontier clusters: " << (t4 - t3).toSec() * 1000 << "ms  "
                                                              << "total: " << (t4 - t1).toSec() * 1000 << "ms" << endl);
-  
-  // Publish individual timing data
-  std_msgs::Float32 timing_msg;
-  timing_msg.data = (t2 - t1).toSec() * 1000;
-  ikd_tree_insert_cost_pub_.publish(timing_msg);
-  
-  timing_msg.data = (t4 - t3).toSec() * 1000;
-  update_frontier_clusters_cost_pub_.publish(timing_msg);
 }
 
 void FastExplorationFSM::transitState(EXPL_STATE new_state, string pos_call, bool red) {

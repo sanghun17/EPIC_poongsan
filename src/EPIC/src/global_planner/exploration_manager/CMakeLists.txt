@@ -25,12 +25,23 @@ find_package(catkin REQUIRED COMPONENTS
   lidar_map
   cv_bridge
   message_filters
+  message_generation
+)
+
+add_service_files(
+  FILES
+  GoalService.srv
+)
+
+generate_messages(
+  DEPENDENCIES
+  std_msgs
 )
 
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES epic_planner
-  CATKIN_DEPENDS pointcloud_topo active_perception path_searching traj_utils lkh_tsp_solver plan_manage frontier_manager lidar_map
+  CATKIN_DEPENDS pointcloud_topo active_perception path_searching traj_utils lkh_tsp_solver plan_manage frontier_manager lidar_map message_runtime
 )
 
 include_directories(
@@ -39,6 +50,7 @@ include_directories(
   ${catkin_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/include
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS}
 )
 
 add_executable(exploration_node
@@ -47,8 +59,11 @@ add_executable(exploration_node
   src/fsm_utils.cpp
 )
 
+add_dependencies(exploration_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
 target_link_libraries(exploration_node
   ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
   OpenMP::OpenMP_CXX
   epic_planner
 )
@@ -58,4 +73,5 @@ add_library(epic_planner
 )
 target_link_libraries(epic_planner
   ${catkin_LIBRARIES}
+  ${OpenCV_LIBS}
 )
