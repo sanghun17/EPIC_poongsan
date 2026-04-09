@@ -26,6 +26,8 @@ void FastExplorationFSM::pubState() {
 }
 
 int FastExplorationFSM::callExplorationPlanner() {
+  ros::Time planning_start_time = ros::Time::now();
+
   // if (planner_manager_->lidar_map_interface_->getDisToOcc(fd_->odom_pos_) < planner_manager_->gcopter_config_->dilateRadiusHard)
   //   return START_FAIL;
   if (planner_manager_->topo_graph_->odom_node_->neighbors_.empty())
@@ -85,6 +87,7 @@ int FastExplorationFSM::callExplorationPlanner() {
     }
   }
   expl_manager_->ed_->path_next_goal_.swap(path_next_goal_tmp);
+  int result;
   if (planner_manager_->planExploreTraj(expl_manager_->ed_->path_next_goal_, fd_->static_state_)) {
     traj_utils::PolyTraj poly_traj_msg;
     planner_manager_->polyTraj2ROSMsg(poly_traj_msg, info->start_time_);
@@ -92,10 +95,20 @@ int FastExplorationFSM::callExplorationPlanner() {
     traj_utils::PolyTraj poly_yaw_traj_msg;
     planner_manager_->polyYawTraj2ROSMsg(poly_yaw_traj_msg, info->start_time_);
     fd_->newest_yaw_traj_ = poly_yaw_traj_msg;
-    return SUCCEED;
+    result = SUCCEED;
   } else {
-    return FAIL;
+    result = FAIL;
   }
+
+  // Block until minimum planning period has elapsed
+  double elapsed = (ros::Time::now() - planning_start_time).toSec();
+  if (elapsed < local_planning_min_period_) {
+    double hold_time = local_planning_min_period_ - elapsed;
+    ROS_INFO("\033[33m[Planning Hz Limit] Holding for %.3f ms (planning took %.3f ms, min period %.3f ms)\033[0m",
+             hold_time * 1000.0, elapsed * 1000.0, local_planning_min_period_ * 1000.0);
+    ros::Duration(hold_time).sleep();
+  }
+  return result;
 }
 
 void FastExplorationFSM::triggerCallback(const nav_msgs::PathConstPtr &msg) {

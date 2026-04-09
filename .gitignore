@@ -20,3 +20,8 @@ src/vision_opencv/
 
 # Map files (large binary files)
 src/MARSIM/map_generator/resource/*.pcd
+
+# Experiment data (CSV, plots, logs)
+src/EPIC/src/global_planner/exploration_manager/experiments/*/iter_*/
+src/EPIC/src/global_planner/exploration_manager/experiments/*/*.png
+src/EPIC/src/global_planner/exploration_manager/experiments/*/params.yaml

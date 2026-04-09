@@ -8,6 +8,7 @@
  */
 #include <frontier_manager/frontier_manager.h>
 #include <pcl/filters/voxel_grid.h>
+#include <std_msgs/Int32.h>
 #include <visualization_msgs/MarkerArray.h>
 size_t ByteArrayRaw::size = 0;
 void FrontierManager::init(ros::NodeHandle &nh, LIOInterface::Ptr &lio_interface,
@@ -112,6 +113,7 @@ void FrontierManager::init(ros::NodeHandle &nh, LIOInterface::Ptr &lio_interface
   vp_cluster_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/vp_cluster_cost", 10);
   remove_unreachable_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/remove_unreachable_cost", 10);
   select_vp_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/select_vp_cost", 10);
+  explored_cell_count_pub_ = nh.advertise<std_msgs::Int32>("/frontier_manager/explored_cell_count", 10);
 }
 
 void FrontierManager::pos2idx(const PointType &pt, Eigen::Vector3i &idx) {
@@ -885,6 +887,10 @@ void FrontierManager::updateFrontierClusters(
 
   // ROS_INFO("[DEBUG updateFrontierClusters] After cluster_frts: cluster_list_=%lu, cluster_updated=%lu, cluster_removed=%lu",
   //          cluster_list_.size(), cluster_updated.size(), cluster_removed.size());
+
+  std_msgs::Int32 count_msg;
+  count_msg.data = static_cast<int32_t>(frtd_.label_map_.size());
+  explored_cell_count_pub_.publish(count_msg);
 }
 
 int FrontierManager::surface_pos2idx(const PointType &pt) {

@@ -212,6 +212,7 @@ private:
   
   // Publishers for timing data
   ros::Publisher vp_cluster_cost_pub_, remove_unreachable_cost_pub_, select_vp_cost_pub_;
+  ros::Publisher explored_cell_count_pub_;
   // frontier update functions:
   void update_lidar_pos();
   void update_updating_aabb(const PointVector &new_frt_pts);

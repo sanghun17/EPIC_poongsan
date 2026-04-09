@@ -4,9 +4,14 @@
 #include <quadrotor_msgs/PositionCommand.h>
 #include <ros/ros.h>
 #include <std_msgs/Empty.h>
+#include <std_msgs/Float32.h>
+#include <std_msgs/String.h>
 #include <traj_utils/PolyTraj.h>
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
+#include <fstream>
+#include <chrono>
+#include <ctime>
 using namespace Eigen;
 using namespace std;
 double replan_time_;
@@ -28,6 +33,23 @@ Eigen::Vector3d last_pos_;
 
 double last_yaw_, last_yawdot_;
 
+// RTH mode detection
+bool is_rth_mode_ = false;
+std::string current_state_ = "";
+size_t rth_start_index_ = 0;  // Index in traj_cmd_ where RTH starts
+bool rth_index_saved_ = false;  // Flag to ensure we only save index once
+
+// Metrics tracking
+ros::Time mission_start_time_;
+bool mission_started_ = false;
+std::vector<double> velocity_samples_;
+std::vector<double> tracking_errors_;
+Eigen::Vector3d last_odom_pos_;
+Eigen::Vector3d last_odom_vel_;
+ros::Time last_odom_time_;
+bool has_last_odom_pos_ = false;
+int error_sample_count_ = 0;
+
 std::pair<double, double> get_yaw(double current_yaw, double t_cur) {
   std::pair<double, double> yaw_yawdot(0, 0);
   if (t_cur > yaw_traj_->getTotalDuration())
@@ -46,6 +68,41 @@ std::pair<double, double> get_yaw(double current_yaw, double t_cur) {
   Eigen::Vector3d av = yaw_traj_->getVel(t_cur);
   yaw_yawdot.second = av(0);
   return yaw_yawdot;
+}
+
+void stateCallback(const visualization_msgs::Marker::ConstPtr& msg) {
+  // Extract state from marker text
+  if (!msg->text.empty()) {
+    current_state_ = msg->text;
+    bool was_rth = is_rth_mode_;
+
+    // Check if in RTH mode - look for RTH in the state string
+    is_rth_mode_ = (current_state_.find("PLAN_TRAJ_RTH") != std::string::npos ||
+                    current_state_.find("_RTH") != std::string::npos);
+
+    // Start mission timer on first trajectory
+    if (!mission_started_ && current_state_.find("EXEC_TRAJ") != std::string::npos) {
+      mission_started_ = true;
+      mission_start_time_ = ros::Time::now();
+      ROS_INFO("\033[32m[Metrics] Mission started\033[0m");
+    }
+
+    // Save RTH start index when RTH mode begins (only once, only if we have some trajectory)
+    if (!rth_index_saved_ && is_rth_mode_ && traj_cmd_.size() > 0) {
+      rth_start_index_ = traj_cmd_.size();
+      rth_index_saved_ = true;
+      ROS_INFO("\033[33m[Metrics] RTH mode activated at index %zu (current state: %s)\033[0m",
+               rth_start_index_, current_state_.c_str());
+    }
+
+    // Debug: print current state
+    static std::string last_state;
+    if (current_state_ != last_state) {
+      ROS_INFO("\033[35m[Debug] State changed: %s (is_rth: %d, traj_size: %zu)\033[0m",
+               current_state_.c_str(), is_rth_mode_, traj_cmd_.size());
+      last_state = current_state_;
+    }
+  }
 }
 
 void heartbeatCallback(std_msgs::EmptyPtr msg) {
@@ -254,6 +311,14 @@ void cmdCallback(const ros::TimerEvent &e) {
     traj_cmd_.emplace_back(pos);
   else if ((traj_cmd_.back() - pos).norm() > 0.02)
     traj_cmd_.emplace_back(pos);
+
+  // Calculate tracking error (planned vs actual position)
+  if (mission_started_ && real_pos_.norm() > 0.01) {
+    double tracking_error = (pos - real_pos_).norm();
+    tracking_errors_.push_back(tracking_error);
+    error_sample_count_++;
+  }
+
   // if (traj_cmd_.size() > 10000)
   //   traj_cmd_.erase(traj_cmd_.begin(), traj_cmd_.begin() + 1000);
   drawCmd(pos, vel, 0, Eigen::Vector4d(0, 1, 0, 1));
@@ -263,19 +328,40 @@ void cmdCallback(const ros::TimerEvent &e) {
 void odomCallbck(const nav_msgs::Odometry &msg) {
   if (msg.child_frame_id == "X" || msg.child_frame_id == "O")
     return;
+
+  Eigen::Vector3d current_pos(msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z);
+
   if (traj_real_.size() == 0) {
-    traj_real_.push_back(
-    Eigen::Vector3d(msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z));
-  } else if ((traj_real_.back() - Eigen::Vector3d(msg.pose.pose.position.x,
-                                                  msg.pose.pose.position.y,
-                                                  msg.pose.pose.position.z))
-             .norm() > 0.1)
-    traj_real_.emplace_back(msg.pose.pose.position.x, msg.pose.pose.position.y,
-                            msg.pose.pose.position.z);
-  real_pos_ = traj_real_.back();
+    traj_real_.push_back(current_pos);
+  } else if ((traj_real_.back() - current_pos).norm() > 0.1) {
+    traj_real_.emplace_back(current_pos);
+  }
+
+  real_pos_ = current_pos;
 
   if (traj_real_.size() > 100000)
     traj_real_.erase(traj_real_.begin(), traj_real_.begin() + 1000);
+
+  // Sample velocity for average speed calculation
+  if (mission_started_) {
+    ros::Time current_time = ros::Time::now();
+
+    // Calculate velocity from position difference if we have previous position
+    if (has_last_odom_pos_) {
+      double dt = (current_time - last_odom_time_).toSec();
+      if (dt > 0.001) {  // Avoid division by very small numbers
+        Eigen::Vector3d displacement = current_pos - last_odom_pos_;
+        double speed = displacement.norm() / dt;
+        if (speed > 0.01 && speed < 10.0) {  // Filter noise and unrealistic speeds
+          velocity_samples_.push_back(speed);
+        }
+      }
+    }
+
+    last_odom_pos_ = current_pos;
+    last_odom_time_ = current_time;
+    has_last_odom_pos_ = true;
+  }
 }
 
 void displayTrajWithColor(std::vector<Eigen::Vector3d> &path, double resolution,
@@ -285,13 +371,17 @@ void displayTrajWithColor(std::vector<Eigen::Vector3d> &path, double resolution,
   mk.header.frame_id = "odom";
   mk.header.stamp = ros::Time::now();
   mk.type = visualization_msgs::Marker::SPHERE_LIST;
+
+  // Set namespace based on id
   if (id == 0) {
     mk.ns = "traj_exp";
     mk.action = visualization_msgs::Marker::DELETEALL;
     mk.id = id;
     mk_arr.markers.emplace_back(mk);
-  } else {
+  } else if (id == 1) {
     mk.ns = "traj_real";
+  } else if (id == 2) {
+    mk.ns = "traj_rth";  // Separate namespace for RTH trajectory
   }
 
   mk.action = visualization_msgs::Marker::ADD;
@@ -319,7 +409,19 @@ void displayTrajWithColor(std::vector<Eigen::Vector3d> &path, double resolution,
 }
 
 void visCallback(const ros::TimerEvent &e) {
-  displayTrajWithColor(traj_cmd_, 0.2, Eigen::Vector4d(1, 1, 1, 1), 0);
+  // Display exploration and RTH paths with different colors
+  if (rth_start_index_ > 0 && rth_start_index_ < traj_cmd_.size()) {
+    // Split trajectory: exploration (white) and RTH (orange)
+    std::vector<Eigen::Vector3d> exploration_path(traj_cmd_.begin(), traj_cmd_.begin() + rth_start_index_);
+    std::vector<Eigen::Vector3d> rth_path(traj_cmd_.begin() + rth_start_index_, traj_cmd_.end());
+
+    displayTrajWithColor(exploration_path, 0.2, Eigen::Vector4d(1, 1, 1, 1), 0);  // White
+    displayTrajWithColor(rth_path, 0.2, Eigen::Vector4d(1, 0.5, 0, 1), 2);  // Orange, different id
+  } else {
+    // No RTH yet, display all as exploration (white)
+    displayTrajWithColor(traj_cmd_, 0.2, Eigen::Vector4d(1, 1, 1, 1), 0);
+  }
+
   displayTrajWithColor(traj_real_, 0.5, Eigen::Vector4d(0, 0, 1, 1), 1);
 }
 
@@ -332,6 +434,93 @@ void replanCallback(const std_msgs::Empty &msg) {
   // std::cout << "\033[32m [TrajServer] Replan , stop after "
   //           << traj_duration_ - (time_now - start_time_).toSec() << "s \033[0m"
   //           << std::endl;
+}
+
+double calculatePathLength(const std::vector<Eigen::Vector3d>& path) {
+  double total_length = 0.0;
+  for (size_t i = 1; i < path.size(); i++) {
+    total_length += (path[i] - path[i-1]).norm();
+  }
+  return total_length;
+}
+
+double calculateAverageSpeed() {
+  if (velocity_samples_.empty()) return 0.0;
+  double sum = 0.0;
+  for (double v : velocity_samples_) {
+    sum += v;
+  }
+  return sum / velocity_samples_.size();
+}
+
+double calculateAverageTrackingError() {
+  if (tracking_errors_.empty()) return 0.0;
+  double sum = 0.0;
+  for (double e : tracking_errors_) {
+    sum += e;
+  }
+  return sum / tracking_errors_.size();
+}
+
+void logMetrics(double rth_distance_to_goal) {
+  if (!mission_started_) return;
+
+  double mission_time = (ros::Time::now() - mission_start_time_).toSec();
+  double avg_speed_odom = calculateAverageSpeed();
+  double path_length = calculatePathLength(traj_cmd_);
+  double avg_speed_path = (mission_time > 0.0) ? (path_length / mission_time) : 0.0;
+  double avg_tracking_error = calculateAverageTrackingError();
+
+  // Log to file
+  std::string log_file = std::string(getenv("HOME")) + "/.ros/epic_metrics.log";
+  std::ofstream ofs(log_file, std::ios::app);
+
+  if (ofs.is_open()) {
+    // Write header if file is new
+    std::ifstream check_file(log_file);
+    check_file.seekg(0, std::ios::end);
+    bool is_new_file = (check_file.tellg() == 0);
+    check_file.close();
+
+    if (is_new_file) {
+      ofs << "timestamp,mission_time(s),rth_distance_to_goal(m),avg_speed_odom(m/s),path_length(m),avg_speed_path(m/s),avg_tracking_error(m),velocity_samples,error_samples\n";
+    }
+
+    // Get current timestamp
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    char timestamp[100];
+    std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", std::localtime(&now_time_t));
+
+    ofs << timestamp << ","
+        << mission_time << ","
+        << rth_distance_to_goal << ","
+        << avg_speed_odom << ","
+        << path_length << ","
+        << avg_speed_path << ","
+        << avg_tracking_error << ","
+        << velocity_samples_.size() << ","
+        << tracking_errors_.size() << "\n";
+
+    ofs.close();
+
+    ROS_INFO("\033[32m[Metrics] Mission Complete - Logged to %s\033[0m", log_file.c_str());
+    ROS_INFO("\033[36m  Mission time: %.2f s\033[0m", mission_time);
+    ROS_INFO("\033[36m  RTH distance to goal: %.3f m\033[0m", rth_distance_to_goal);
+    ROS_INFO("\033[36m  Avg speed (odometry): %.3f m/s\033[0m", avg_speed_odom);
+    ROS_INFO("\033[36m  Path length: %.2f m\033[0m", path_length);
+    ROS_INFO("\033[36m  Avg speed (path/time): %.3f m/s\033[0m", avg_speed_path);
+    ROS_INFO("\033[36m  Avg tracking error: %.3f m\033[0m", avg_tracking_error);
+  } else {
+    ROS_ERROR("[Metrics] Failed to open log file: %s", log_file.c_str());
+  }
+}
+
+void rthDistanceCallback(const std_msgs::Float32::ConstPtr& msg) {
+  // RTH completed, log all metrics
+  double rth_distance = msg->data;
+  ROS_INFO("\033[33m[Metrics] RTH distance received: %.3f m, logging metrics...\033[0m", rth_distance);
+  logMetrics(rth_distance);
 }
 
 void newCallback(std_msgs::Empty msg) {
@@ -356,6 +545,8 @@ int main(int argc, char **argv) {
   ros::Subscriber odom_sub = nh.subscribe(odom_topic, 50, odomCallbck);
   ros::Subscriber replan_sub = nh.subscribe("/planning/replan", 10, replanCallback);
   ros::Subscriber new_sub = nh.subscribe("planning/new", 10, newCallback);
+  ros::Subscriber state_sub = nh.subscribe("/planning/state", 10, stateCallback);
+  ros::Subscriber rth_dist_sub = nh.subscribe("/planning/rth_distance", 10, rthDistanceCallback);
 
   nh.param("/fsm/replan_time", replan_time_, 0.1);
   ros::Timer vis_timer = nh.createTimer(ros::Duration(0.25), visCallback);

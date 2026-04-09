@@ -1,5 +1,5 @@
 #topic param:
-odometry_topic: /quad_0/lidar_slam/odom
+odometry_topic: /quad_0/lidar_slam/odom_throttled
 cloud_topic: /quad0_pcl_render_node/cloud
 global_planning/w_vdir: 1.2
 global_planning/w_yawdir: 0.0
@@ -86,3 +86,4 @@ yaw_time_fwd: 3.0
 # FSM param
 fsm/goal_tolerance: 0.2
 fsm/max_segment_length: 99.0
+fsm/local_planning_max_hz: 30.0  # Max local planning frequency (Hz). Lower to simulate slow planning.
