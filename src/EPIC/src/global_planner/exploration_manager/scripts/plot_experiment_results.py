@@ -67,14 +67,16 @@ def plot_timeseries_ax(ax, all_times, all_values, ylabel, title, color='C0', mea
     # Interpolate for mean computation
     common_t, interpolated = interpolate_to_common_time(all_times, all_values)
 
-    # Individual iterations
+    # Individual iterations - use colormap for distinguishable colors
+    cmap = plt.cm.tab10 if len(all_times) <= 10 else plt.cm.tab20
     for i, (t, v) in enumerate(zip(all_times, all_values)):
-        ax.plot(t, v, color=color, alpha=0.2, linewidth=0.5, label=f'iter {i+1:02d}' if i == 0 else None)
+        c = cmap(i % cmap.N)
+        ax.plot(t, v, color=c, alpha=0.3, linewidth=0.7, label=f'iter {i+1:02d}')
 
     # Mean line
     if interpolated:
         mean_v = np.mean(interpolated, axis=0)
-        ax.plot(common_t, mean_v, color=color, alpha=1.0, linewidth=2.0, label='mean')
+        ax.plot(common_t, mean_v, color='black', alpha=0.9, linewidth=2.5, label='mean')
 
         # Average value text
         overall_mean = np.mean(mean_v)
@@ -89,7 +91,7 @@ def plot_timeseries_ax(ax, all_times, all_values, ylabel, title, color='C0', mea
     ax.set_xlabel('Time (s)')
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    ax.legend(loc='upper left', fontsize=7)
+    ax.legend(loc='upper left', fontsize=6, ncol=2)
     ax.grid(True, alpha=0.3)
 
 
@@ -207,12 +209,18 @@ def main():
         ax4.add_patch(circle)
 
         errors = [np.sqrt((x - ox)**2 + (y - oy)**2) for x, y in finish_positions]
-        mean_err = np.mean(errors) * 1000
-        max_err = np.max(errors) * 1000
+        mean_err = np.mean(errors)
+        max_err = np.max(errors)
         success_rate = sum(1 for e in errors if e < 0.4) / len(errors) * 100
 
-        stats_text = (f'Mean error: {mean_err:.1f} mm\n'
-                      f'Max error: {max_err:.1f} mm\n'
+        # Mean error circle
+        mean_circle = plt.Circle((ox, oy), mean_err, fill=False, color='#FF9800',
+                                  linestyle='-', linewidth=1.5,
+                                  label=f'Mean error ({mean_err*1000:.1f}mm)')
+        ax4.add_patch(mean_circle)
+
+        stats_text = (f'Mean error: {mean_err*1000:.1f} mm\n'
+                      f'Max error: {max_err*1000:.1f} mm\n'
                       f'Success rate: {success_rate:.0f}%\n'
                       f'({sum(1 for e in errors if e < 0.4)}/{len(errors)})')
         ax4.text(0.98, 0.95, stats_text, transform=ax4.transAxes, fontsize=9,
