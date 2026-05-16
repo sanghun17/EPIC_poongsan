@@ -87,6 +87,26 @@ void LIOInterface::init(ros::NodeHandle &nh) {
   nh.param("lidar_perception/fov_viewpoint_up", lp_->fov_vp_up, -0.1);
   nh.param("lidar_perception/fov_viewpoint_down", lp_->fov_vp_down, -0.1);
   nh.getParam("lidar_perception/max_ray_length", lp_->max_ray_length_);
+
+  // CropBox parameters
+  nh.param("lidar_perception/use_cropbox", lp_->use_cropbox_, false);
+  std::vector<double> cropbox_min_vec, cropbox_max_vec;
+  if (nh.getParam("lidar_perception/cropbox_min", cropbox_min_vec) && cropbox_min_vec.size() == 3) {
+    lp_->cropbox_min_ = Eigen::Vector3f(cropbox_min_vec[0], cropbox_min_vec[1], cropbox_min_vec[2]);
+  } else {
+    lp_->cropbox_min_ = Eigen::Vector3f(-5.0, -3.0, -1.0);
+  }
+  if (nh.getParam("lidar_perception/cropbox_max", cropbox_max_vec) && cropbox_max_vec.size() == 3) {
+    lp_->cropbox_max_ = Eigen::Vector3f(cropbox_max_vec[0], cropbox_max_vec[1], cropbox_max_vec[2]);
+  } else {
+    lp_->cropbox_max_ = Eigen::Vector3f(5.0, 3.0, 2.0);
+  }
+  if (lp_->use_cropbox_) {
+    ROS_INFO("[LIOInterface] CropBox enabled: min=[%.1f, %.1f, %.1f], max=[%.1f, %.1f, %.1f]",
+             lp_->cropbox_min_.x(), lp_->cropbox_min_.y(), lp_->cropbox_min_.z(),
+             lp_->cropbox_max_.x(), lp_->cropbox_max_.y(), lp_->cropbox_max_.z());
+  }
+
   ld_->first_map_flag_ = true;
 
   // Initialize TF listener for frame transforms
@@ -114,7 +134,7 @@ void LIOInterface::init(ros::NodeHandle &nh) {
     initializeTransform(map_frame, body_frame, cloud_frame);
   } else {
     ROS_WARN("[LIOInterface] Failed to receive initial messages, transform initialization skipped");
-    needs_transform_ = false;
+    transform_mode_ = TransformMode::NONE;
   }
 
   // update_trigger_puber_ =

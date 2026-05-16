@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <launch>
-    <arg name="odom_topic" value="/aft_mapped_to_init" /> <!-- init -->
+    <arg name="odom_topic" value="/aft_mapped_to_odom" />
     <!-- set for d455 -->
-    <arg name="sensing_horizon_d455" value="60.0" />
+    <arg name="sensing_horizon_zed2" value="60.0" />
     <arg name="sensing_rate" value="10.0" />
     
     <node pkg="waypoint_generator" name="waypoint_generator" type="waypoint_generator"

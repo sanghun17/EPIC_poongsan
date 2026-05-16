@@ -57,15 +57,27 @@ void FrontierManager::generateTSPViewpoints(Eigen::Vector3f&center,  vector<Topo
   int dormant_count = 0, unreachable_count = 0;
   for (auto &cluster : cluster_list_) {
     if (cluster->is_dormant_) {
+      // ROS_INFO("[DEBUG generateTSPViewpoints] Cluster id=%d DORMANT: cells=%lu, box_size=(%.2f,%.2f,%.2f), center=(%.2f,%.2f,%.2f)",
+      //          cluster->id_, cluster->cells_.size(),
+      //          (cluster->box_max_ - cluster->box_min_).x(),
+      //          (cluster->box_max_ - cluster->box_min_).y(),
+      //          (cluster->box_max_ - cluster->box_min_).z(),
+      //          cluster->center_.x(), cluster->center_.y(), cluster->center_.z());
       dormant_count++;
       continue;
     }
     if (!cluster->is_reachable_) {
+      // ROS_INFO("[DEBUG generateTSPViewpoints] Cluster id=%d UNREACHABLE: cells=%lu, vp_clusters=%lu, center=(%.2f,%.2f,%.2f)",
+      //          cluster->id_, cluster->cells_.size(), cluster->vp_clusters_.size(),
+      //          cluster->center_.x(), cluster->center_.y(), cluster->center_.z());
       unreachable_count++;
       continue;
     }
     if (revp_clusters_set.count(cluster))
       continue;
+    // ROS_INFO("[DEBUG generateTSPViewpoints] Cluster id=%d VALID: cells=%lu, vp_clusters=%lu, center=(%.2f,%.2f,%.2f)",
+    //          cluster->id_, cluster->cells_.size(), cluster->vp_clusters_.size(),
+    //          cluster->center_.x(), cluster->center_.y(), cluster->center_.z());
     old_clusters_within_consideration.push_back(cluster);
     // float distance =
     // (center- cluster->center_).norm() + fabs(graph_->odom_node_->center_.z() - cluster->center_.z()) * 0.5;
@@ -103,6 +115,11 @@ void FrontierManager::generateTSPViewpoints(Eigen::Vector3f&center,  vector<Topo
   ros::Time t2 = ros::Time::now();
   // cout << "init cluster viewpoint cost: " << (t2 - t1).toSec() * 1000 << "ms" << endl;
 
+  // ROS_INFO("[DEBUG generateTSPViewpoints] After initClusterViewpoints:");
+  // for (auto &cls : revp_clusters_vec) {
+  //   ROS_INFO("[DEBUG generateTSPViewpoints]   Cluster id=%d: vp_clusters=%lu", cls->id_, cls->vp_clusters_.size());
+  // }
+
   PointVector vp_centers;
   for (auto &cls : revp_clusters_vec) {
     for (auto &vpc : cls->vp_clusters_) {
@@ -116,6 +133,9 @@ void FrontierManager::generateTSPViewpoints(Eigen::Vector3f&center,  vector<Topo
   for (auto &cluster : revp_clusters_vec) {
     if (cluster->is_reachable_)
       clusters_can_be_searched_.push_back(cluster);
+    // else
+    //   ROS_INFO("[DEBUG generateTSPViewpoints] After removeUnreachableViewpoints: Cluster id=%d became UNREACHABLE (vp_clusters=%lu)",
+    //            cluster->id_, cluster->vp_clusters_.size());
   }
 
   // ROS_INFO("[DEBUG generateTSPViewpoints] After removeUnreachableViewpoints: %lu -> %lu reachable",
@@ -136,15 +156,22 @@ void FrontierManager::generateTSPViewpoints(Eigen::Vector3f&center,  vector<Topo
   for (int i = 0; i < clusters_can_be_searched_.size(); i++) {
     auto cluster = clusters_can_be_searched_[i];
     selectBestViewpoint(cluster);
-    if (!cluster->is_reachable_)
+    if (!cluster->is_reachable_) {
+      // ROS_INFO("[DEBUG generateTSPViewpoints] After selectBestViewpoint: Cluster id=%d became UNREACHABLE", cluster->id_);
       continue;
+    }
     mtx.lock();
     tsp_clusters.push_back(cluster);
     if (cluster->is_dormant_) {
+      // ROS_INFO("[DEBUG generateTSPViewpoints] After selectBestViewpoint: Cluster id=%d became DORMANT", cluster->id_);
       cluster2remove.insert(i);
     }
     mtx.unlock();
   }
+
+  // ROS_INFO("[DEBUG generateTSPViewpoints] After selectBestViewpoint: %lu -> %lu tsp_clusters",
+  //          clusters_can_be_searched_.size(), tsp_clusters.size());
+
   // 飞到但看不到，说明odom漂了，这篇工作不处理，直接跳过
   cluster_list_.remove_if([&](ClusterInfo::Ptr cluster) {
     bool remove = cluster2remove.count(cluster->id_);

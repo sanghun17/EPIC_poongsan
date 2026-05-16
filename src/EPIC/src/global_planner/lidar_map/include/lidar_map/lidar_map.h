@@ -30,6 +30,14 @@ using namespace std;
 template <typename PointType> class KD_TREE;
 
 namespace fast_planner {
+
+// Transform mode enum for pointcloud frame conversion
+enum class TransformMode {
+  NONE,           // No transform needed (cloud_frame == map_frame)
+  CLOUD_IN_WORLD, // cloud is in world frame (T_map_cloud static)
+  CLOUD_IN_LOCAL  // cloud is in sensor local frame (T_body_cloud static)
+};
+
 struct LIOInterfaceParam;
 struct LIOInterfaceData;
 
@@ -79,17 +87,20 @@ private:
   KD_TREE<PointType> ikd_Tree_map;
 
   // Transform members for pointcloud frame conversion
-  bool needs_transform_;
+  TransformMode transform_mode_;
   std::string map_frame_;
   std::string body_frame_;
   std::string cloud_frame_;
-  Eigen::Matrix4f T_body_to_cloud_;
+  Eigen::Matrix4f T_body_cloud_;       // cloud -> body transform (STATIC_VIA_BODY)
+  Eigen::Matrix4f T_map_cloud_static_; // cloud -> map transform (STATIC_DIRECT)
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
   void initializeTransform(const std::string& map_frame,
                           const std::string& body_frame,
                           const std::string& cloud_frame);
+  bool isStaticTransform(const std::string& target_frame,
+                         const std::string& source_frame);
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
@@ -109,6 +120,11 @@ struct LIOInterfaceParam {
   double max_ray_length_;
   double fov_up, fov_down;
   double fov_vp_up, fov_vp_down;
+
+  // CropBox parameters (in body/camera_link frame)
+  bool use_cropbox_;
+  Eigen::Vector3f cropbox_min_;
+  Eigen::Vector3f cropbox_max_;
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };

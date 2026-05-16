@@ -62,7 +62,7 @@ private:
   ros::Timer exec_timer_, global_path_update_timer_;
   ros::Subscriber trigger_sub_, map_update_sub_, battary_sub_;
   ros::Publisher stop_pub_, new_pub_, replan_pub_, poly_traj_pub_, heartbeat_pub_, time_cost_pub_, poly_yaw_traj_pub_, static_pub_, state_pub_,
-  land_pub_, rth_metrics_pub_;
+  land_pub_;
   ros::ServiceServer srv_goal_;
   
   // Global planning timing publishers
@@ -86,10 +86,6 @@ private:
   Eigen::Vector4d goal_rth_;  // x, y, z, yaw
   bool has_goal_rth_;
   double goal_tolerance_;
-
-  /* local planning rate control */
-  double local_planning_max_hz_;
-  double local_planning_min_period_;
 
   /* helper functions */
   int callExplorationPlanner();

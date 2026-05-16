@@ -662,6 +662,8 @@ void TopoGraph::insertNodes(vector<TopoNode::Ptr> &nodes, bool only_raycast) {
   for (auto &node : nodes) {
     vector<TopoNode::Ptr> nbrs;
     getPreNbrs(node, nbrs);
+    // ROS_INFO("[DEBUG insertNodes] node=(%.2f,%.2f,%.2f), candidate_nbrs=%lu",
+    //          node->center_.x(), node->center_.y(), node->center_.z(), nbrs.size());
     for (auto &nbr : nbrs) {
       if (ptr_pair_set.find({node, nbr}) == ptr_pair_set.end()) {
         pair_vector.push_back({node, nbr});
@@ -730,6 +732,21 @@ void TopoGraph::insertNodes(vector<TopoNode::Ptr> &nodes, bool only_raycast) {
     node1->weight_[node2] = cost;
     node2->weight_[node1] = cost;
   }
+
+  // Debug: show final neighbor connections for inserted nodes
+  // for (auto &node : nodes) {
+  //   if (!node->neighbors_.empty()) {
+  //     ROS_INFO("[DEBUG insertNodes] node=(%.2f,%.2f,%.2f) connected to %lu neighbors:",
+  //              node->center_.x(), node->center_.y(), node->center_.z(), node->neighbors_.size());
+  //     int cnt = 0;
+  //     for (auto &nbr : node->neighbors_) {
+  //       if (cnt++ < 3) {
+  //         ROS_INFO("[DEBUG insertNodes]   -> nbr=(%.2f,%.2f,%.2f)",
+  //                  nbr->center_.x(), nbr->center_.y(), nbr->center_.z());
+  //       }
+  //     }
+  //   }
+  // }
 }
 
 void TopoGraph::getRegionsToUpdate() {

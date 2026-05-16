@@ -15,11 +15,46 @@ memory, thread mutual exclusion should be noted.
 #include "visualization_msgs/Marker.h"
 #include <lidar_map/lidar_map.h>
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/crop_box.h>
 #include <pcl/common/transforms.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_eigen/tf2_eigen.h>
 #include <geometry_msgs/TransformStamped.h>
 namespace fast_planner {
+
+bool LIOInterface::isStaticTransform(const std::string& target_frame,
+                                      const std::string& source_frame) {
+  try {
+    auto t1 = tf_buffer_->lookupTransform(target_frame, source_frame,
+                                           ros::Time(0), ros::Duration(5.0));
+    ros::Duration(1.0).sleep();
+    auto t2 = tf_buffer_->lookupTransform(target_frame, source_frame,
+                                           ros::Time(0), ros::Duration(1.0));
+
+    // Compare using Eigen
+    Eigen::Vector3d p1(t1.transform.translation.x,
+                       t1.transform.translation.y,
+                       t1.transform.translation.z);
+    Eigen::Vector3d p2(t2.transform.translation.x,
+                       t2.transform.translation.y,
+                       t2.transform.translation.z);
+
+    Eigen::Quaterniond q1(t1.transform.rotation.w, t1.transform.rotation.x,
+                          t1.transform.rotation.y, t1.transform.rotation.z);
+    Eigen::Quaterniond q2(t2.transform.rotation.w, t2.transform.rotation.x,
+                          t2.transform.rotation.y, t2.transform.rotation.z);
+
+    double pos_diff = (p1 - p2).norm();
+    double rot_diff = q1.angularDistance(q2);
+
+    return (pos_diff < 1e-6 && rot_diff < 1e-6);
+
+  } catch (tf2::TransformException& ex) {
+    ROS_WARN("[LIOInterface] Cannot check if %s->%s is static: %s",
+             source_frame.c_str(), target_frame.c_str(), ex.what());
+    return false;
+  }
+}
 
 void LIOInterface::initializeTransform(const std::string& map_frame,
                                        const std::string& body_frame,
@@ -28,34 +63,59 @@ void LIOInterface::initializeTransform(const std::string& map_frame,
   body_frame_ = body_frame;
   cloud_frame_ = cloud_frame;
 
-  // Check if transform is needed
+  // Case 0: Same frame - no transform needed
   if (cloud_frame_ == map_frame_) {
-    needs_transform_ = false;
+    transform_mode_ = TransformMode::NONE;
     ROS_INFO("[LIOInterface] Cloud frame '%s' matches map frame '%s', no transform needed",
              cloud_frame_.c_str(), map_frame_.c_str());
     return;
   }
 
-  // Lookup static transform: body_frame -> cloud_frame
-  try {
-    geometry_msgs::TransformStamped transform_stamped =
-        tf_buffer_->lookupTransform(body_frame_, cloud_frame_, ros::Time(0), ros::Duration(5.0));
+  // Case 1: Check if cloud -> map is static
+  ROS_INFO("[LIOInterface] Checking if %s -> %s is static (waiting 1 sec)...",
+           cloud_frame_.c_str(), map_frame_.c_str());
+  if (isStaticTransform(map_frame_, cloud_frame_)) {
+    try {
+      geometry_msgs::TransformStamped transform_stamped =
+          tf_buffer_->lookupTransform(map_frame_, cloud_frame_, ros::Time(0), ros::Duration(1.0));
+      Eigen::Isometry3d transform_eigen = tf2::transformToEigen(transform_stamped.transform);
+      T_map_cloud_static_ = transform_eigen.matrix().cast<float>();
 
-    // Convert to Eigen::Matrix4f
-    Eigen::Isometry3d transform_eigen = tf2::transformToEigen(transform_stamped.transform);
-    T_body_to_cloud_ = transform_eigen.matrix().cast<float>();
-
-    needs_transform_ = true;
-    ROS_INFO("[LIOInterface] Successfully looked up transform %s -> %s",
-             body_frame_.c_str(), cloud_frame_.c_str());
-    ROS_INFO("[LIOInterface] Transform will be applied: map(%s) -> body(%s) -> cloud(%s)",
-             map_frame_.c_str(), body_frame_.c_str(), cloud_frame_.c_str());
-  } catch (tf2::TransformException &ex) {
-    ROS_ERROR("[LIOInterface] Failed to lookup transform %s -> %s: %s",
-              body_frame_.c_str(), cloud_frame_.c_str(), ex.what());
-    ROS_ERROR("[LIOInterface] Proceeding without transform - pointcloud may be misaligned!");
-    needs_transform_ = false;
+      transform_mode_ = TransformMode::CLOUD_IN_WORLD;
+      ROS_INFO("[LIOInterface] Using CLOUD_IN_WORLD mode: %s -> %s",
+               cloud_frame_.c_str(), map_frame_.c_str());
+      return;
+    } catch (tf2::TransformException &ex) {
+      ROS_WARN("[LIOInterface] Failed to lookup static transform %s -> %s: %s",
+               cloud_frame_.c_str(), map_frame_.c_str(), ex.what());
+    }
   }
+
+  // Case 2: Check if cloud -> body is static
+  ROS_INFO("[LIOInterface] Checking if %s -> %s is static (waiting 1 sec)...",
+           cloud_frame_.c_str(), body_frame_.c_str());
+  if (isStaticTransform(body_frame_, cloud_frame_)) {
+    try {
+      geometry_msgs::TransformStamped transform_stamped =
+          tf_buffer_->lookupTransform(body_frame_, cloud_frame_, ros::Time(0), ros::Duration(1.0));
+      Eigen::Isometry3d transform_eigen = tf2::transformToEigen(transform_stamped.transform);
+      T_body_cloud_ = transform_eigen.matrix().cast<float>();
+
+      transform_mode_ = TransformMode::CLOUD_IN_LOCAL;
+      ROS_INFO("[LIOInterface] Using CLOUD_IN_LOCAL mode: %s -> %s -> %s",
+               cloud_frame_.c_str(), body_frame_.c_str(), map_frame_.c_str());
+      return;
+    } catch (tf2::TransformException &ex) {
+      ROS_WARN("[LIOInterface] Failed to lookup static transform %s -> %s: %s",
+               cloud_frame_.c_str(), body_frame_.c_str(), ex.what());
+    }
+  }
+
+  // Case 3: Neither is static - error
+  ROS_FATAL("[LIOInterface] Neither %s->%s nor %s->%s is static. Cannot proceed.",
+            cloud_frame_.c_str(), map_frame_.c_str(),
+            cloud_frame_.c_str(), body_frame_.c_str());
+  ros::shutdown();
 }
 
 double LIOInterface::getDisToOcc(const PointType &pt) {
@@ -125,7 +185,7 @@ void LIOInterface::updateCloudMapOdometry(
   // OPTIMIZATION: Voxel filter BEFORE transformation (process fewer points)
   ros::Time start = ros::Time::now();
   pcl::VoxelGrid<pcl::PointXYZ> vg;
-  vg.setLeafSize(0.1, 0.1, 0.1);
+  vg.setLeafSize(0.4, 0.4, 0.4); // 0.1, 0.1, 0.1
   vg.setInputCloud(cloud_input.makeShared());
   pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_points(
       new pcl::PointCloud<pcl::PointXYZ>);
@@ -136,35 +196,70 @@ void LIOInterface::updateCloudMapOdometry(
   //                   (ros::Time::now() - start).toSec() * 1000.0);
 
   if (filtered_points->points.empty()) {
-    // ROS_WARN_THROTTLE(1.0, "[LIOInterface] Point cloud empty after filtering! Input had %lu points",
-    //                   cloud_input.points.size());
     return;
   }
 
-  // Apply frame transformation if needed (on filtered cloud for efficiency)
-  // ros::Time t_transform_start = ros::Time::now();
-  if (needs_transform_) {
-    // ROS_INFO_THROTTLE(5.0, "[LIOInterface] Applying frame transformation to %lu filtered points",
-    //                   filtered_points->points.size());
-    // Build T_map_body from odometry
-    Eigen::Matrix4f T_map_body = Eigen::Matrix4f::Identity();
-    T_map_body.block<3, 1>(0, 3) = lidar_pos_;
-    Eigen::Quaternionf q_map_body(odom_->pose.pose.orientation.w,
-                                   odom_->pose.pose.orientation.x,
-                                   odom_->pose.pose.orientation.y,
-                                   odom_->pose.pose.orientation.z);
-    T_map_body.block<3, 3>(0, 0) = q_map_body.toRotationMatrix();
+  // Compute T_map_body from odometry (used by all modes)
+  Eigen::Matrix4f T_map_body = Eigen::Matrix4f::Identity();
+  T_map_body.block<3, 1>(0, 3) = lidar_pos_;
+  Eigen::Quaternionf q_map_body(odom_->pose.pose.orientation.w,
+                                 odom_->pose.pose.orientation.x,
+                                 odom_->pose.pose.orientation.y,
+                                 odom_->pose.pose.orientation.z);
+  T_map_body.block<3, 3>(0, 0) = q_map_body.toRotationMatrix();
 
-    // Compute T_map_cloud = T_map_body * T_body_cloud
-    Eigen::Matrix4f T_map_cloud = T_map_body * T_body_to_cloud_;
+  // Compute T_body_cloud based on transform mode (for CropBox)
+  Eigen::Matrix4f T_body_cloud;
+  if (transform_mode_ == TransformMode::CLOUD_IN_LOCAL) {
+    // cloud -> body is static (cached)
+    T_body_cloud = T_body_cloud_;
+  } else if (transform_mode_ == TransformMode::CLOUD_IN_WORLD) {
+    // T_body_cloud = T_body_map * T_map_cloud = T_map_body.inverse() * T_map_cloud_static_
+    T_body_cloud = T_map_body.inverse() * T_map_cloud_static_;
+  } else {
+    // NONE: cloud == map, use T_body_map
+    T_body_cloud = T_map_body.inverse();
+  }
 
-    // Transform pointcloud (in-place)
+  // CropBox filtering in body frame
+  if (lp_->use_cropbox_) {
+    // Transform points from cloud frame to body frame
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_in_body(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::transformPointCloud(*filtered_points, *cloud_in_body, T_body_cloud);
+
+    // Apply CropBox filter in body frame
+    pcl::CropBox<pcl::PointXYZ> cropbox;
+    cropbox.setInputCloud(cloud_in_body);
+    cropbox.setMin(Eigen::Vector4f(lp_->cropbox_min_.x(), lp_->cropbox_min_.y(),
+                                    lp_->cropbox_min_.z(), 1.0));
+    cropbox.setMax(Eigen::Vector4f(lp_->cropbox_max_.x(), lp_->cropbox_max_.y(),
+                                    lp_->cropbox_max_.z(), 1.0));
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cropped_body(new pcl::PointCloud<pcl::PointXYZ>);
+    cropbox.filter(*cropped_body);
+
+    // Transform back to cloud frame
+    Eigen::Matrix4f T_cloud_body = T_body_cloud.inverse();
+    pcl::transformPointCloud(*cropped_body, *filtered_points, T_cloud_body);
+
+    if (filtered_points->points.empty()) {
+      return;
+    }
+  }
+
+  // Apply frame transformation to map frame based on transform mode
+  if (transform_mode_ == TransformMode::CLOUD_IN_LOCAL) {
+    // T_map_cloud = T_map_body * T_body_cloud_
+    Eigen::Matrix4f T_map_cloud = T_map_body * T_body_cloud_;
     pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_cloud(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::transformPointCloud(*filtered_points, *transformed_cloud, T_map_cloud);
     filtered_points = transformed_cloud;
-    // ROS_INFO_THROTTLE(5.0, "[LIOInterface] Transform completed (took %.2fms)",
-    //                   (ros::Time::now() - t_transform_start).toSec() * 1000.0);
+  } else if (transform_mode_ == TransformMode::CLOUD_IN_WORLD) {
+    // T_map_cloud is static (cached)
+    pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::transformPointCloud(*filtered_points, *transformed_cloud, T_map_cloud_static_);
+    filtered_points = transformed_cloud;
   }
+  // TransformMode::NONE - no transformation needed
 
   // BUGFIX: Store the processed cloud in ld_->lidar_cloud_ (was missing in frame transform version)
   ld_->lidar_cloud_ = *filtered_points;

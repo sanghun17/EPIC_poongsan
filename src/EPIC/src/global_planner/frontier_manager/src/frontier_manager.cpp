@@ -8,7 +8,6 @@
  */
 #include <frontier_manager/frontier_manager.h>
 #include <pcl/filters/voxel_grid.h>
-#include <std_msgs/Int32.h>
 #include <visualization_msgs/MarkerArray.h>
 size_t ByteArrayRaw::size = 0;
 void FrontierManager::init(ros::NodeHandle &nh, LIOInterface::Ptr &lio_interface,
@@ -113,7 +112,6 @@ void FrontierManager::init(ros::NodeHandle &nh, LIOInterface::Ptr &lio_interface
   vp_cluster_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/vp_cluster_cost", 10);
   remove_unreachable_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/remove_unreachable_cost", 10);
   select_vp_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/select_vp_cost", 10);
-  explored_cell_count_pub_ = nh.advertise<std_msgs::Int32>("/frontier_manager/explored_cell_count", 10);
 }
 
 void FrontierManager::pos2idx(const PointType &pt, Eigen::Vector3i &idx) {
@@ -887,10 +885,6 @@ void FrontierManager::updateFrontierClusters(
 
   // ROS_INFO("[DEBUG updateFrontierClusters] After cluster_frts: cluster_list_=%lu, cluster_updated=%lu, cluster_removed=%lu",
   //          cluster_list_.size(), cluster_updated.size(), cluster_removed.size());
-
-  std_msgs::Int32 count_msg;
-  count_msg.data = static_cast<int32_t>(frtd_.label_map_.size());
-  explored_cell_count_pub_.publish(count_msg);
 }
 
 int FrontierManager::surface_pos2idx(const PointType &pt) {
@@ -1079,6 +1073,9 @@ void FrontierManager::selectBestViewpoint(ClusterInfo::Ptr &cluster) {
   occ_free_frts.resize(vps.size(), PointVector());
   RayCaster ray_caster;
   ray_caster.setParams(double(frtp_.cell_size_), frtp_.map_min_.cast<double>());
+  // Debug counters
+  int total_cells = cluster->cells_.size();
+  int reject_distance = 0, reject_dir_score = 0, reject_raycast = 0, accept_count = 0;
   for (int i = 0; i < vps.size(); i++) {
     Eigen::Vector3f vp = vps[i].getVector3fMap();
     for (int j = 0; j < cluster->cells_.size(); j++) {
@@ -1086,19 +1083,25 @@ void FrontierManager::selectBestViewpoint(ClusterInfo::Ptr &cluster) {
       Eigen::Vector3f dir = (frt - vp).cast<float>();
       float distance = dir.norm();
       dir.normalize();
-      if (distance > frtp_.good_observation_trust_length_)
+      if (distance > frtp_.good_observation_trust_length_) {
+        reject_distance++;
         continue;
+      }
       CELL_STATE state = get_state(cluster->cells_[j]);
       if (state == FRONTIER_DIR &&
-          distance > frtp_.good_observation_force_trust_length_)
+          distance > frtp_.good_observation_force_trust_length_) {
+        reject_distance++;
         continue;
+      }
       Eigen::Vector3f norm = cluster->norms_[j];
       float sin_theta = dir.dot(norm);
       float cos_thera = sqrt(1 - sin_theta * sin_theta);
       float delta = M_PI / 100.0;
       float score = sin_theta / (sin_theta + delta * cos_thera);
-      if (score < frtp_.good_observation_direction_score_)
+      if (score < frtp_.good_observation_direction_score_) {
+        reject_dir_score++;
         continue;
+      }
       ray_caster.input(frt.cast<double>(), vp.cast<double>());
       bool visib = true;
       Eigen::Vector3i idx;
@@ -1115,9 +1118,20 @@ void FrontierManager::selectBestViewpoint(ClusterInfo::Ptr &cluster) {
       }
       if (visib) {
         occ_free_frts[i].push_back(cluster->cells_[j]);
+        accept_count++;
+      } else {
+        reject_raycast++;
       }
     }
   }
+  // ROS_INFO("[DEBUG selectBestViewpoint] cluster=%d, vps=%lu, cells=%d: reject_dist=%d, reject_dir=%d, reject_ray=%d, accept=%d",
+  //          cluster->id_, vps.size(), total_cells, reject_distance, reject_dir_score, reject_raycast, accept_count);
+  // Debug: show occ_free_frts for each vp
+  // for (int i = 0; i < vps.size(); i++) {
+  //   Eigen::Vector3f vp_pos = vps[i].getVector3fMap();
+  //   ROS_INFO("[DEBUG selectBestViewpoint] vp[%d]=(%.2f,%.2f,%.2f): occ_free_frts=%lu",
+  //            i, vp_pos.x(), vp_pos.y(), vp_pos.z(), occ_free_frts[i].size());
+  // }
   for (int i = 0; i < vps.size(); i++) {
     if (occ_free_frts[i].size() < 3) {
       continue;
@@ -1145,6 +1159,8 @@ void FrontierManager::selectBestViewpoint(ClusterInfo::Ptr &cluster) {
     }
     int max_yaw_idx = distance(yaw_score.begin(),
                                max_element(yaw_score.begin(), yaw_score.end()));
+    // ROS_INFO("[DEBUG selectBestViewpoint] vp[%d] FOV check: max_yaw_score=%d (fov_up=%.2f, fov_down=%.2f)",
+    //          i, yaw_score[max_yaw_idx], vpp_.fov_up_, vpp_.fov_down_);
     // if (yaw_score[max_yaw_idx] == 0)
     //   continue;
     score[i] = yaw_score[max_yaw_idx];
@@ -1186,18 +1202,42 @@ void FrontierManager::initClusterViewpoints(ClusterInfo::Ptr &cluster) {
   cluster->vp_clusters_.clear();
   PointVector vps_init;
   vps_init.reserve(origin_viewpoints_.size());
+  int reject_occ = 0, reject_box = 0, reject_region = 0;
+  int sample_log_occ = 0, sample_log_box = 0;  // 샘플 로그 카운터
   for (auto &ovp : origin_viewpoints_) {
     Eigen::Vector3f vp = ovp + cluster->center_;
-    if (lidar_map_interface_->getDisToOcc(vp) < 0.9)
+    float dis_to_occ = lidar_map_interface_->getDisToOcc(vp);
+    if (dis_to_occ < 0.9) {
+      // if (sample_log_occ < 2) {
+      //   ROS_INFO("[DEBUG initClusterViewpoints] reject_occ sample: vp=(%.2f,%.2f,%.2f), dis_to_occ=%.3f",
+      //            vp.x(), vp.y(), vp.z(), dis_to_occ);
+      //   sample_log_occ++;
+      // }
+      reject_occ++;
       continue;
-    if (!isInBox(vp))
+    }
+    if (!isInBox(vp)) {
+      // if (sample_log_box < 2) {
+      //   ROS_INFO("[DEBUG initClusterViewpoints] reject_box sample: vp=(%.2f,%.2f,%.2f), box_z=[%.1f,%.1f]",
+      //            vp.x(), vp.y(), vp.z(),
+      //            lidar_map_interface_->lp_->global_box_min_boundary_.z(),
+      //            lidar_map_interface_->lp_->global_box_max_boundary_.z());
+      //   sample_log_box++;
+      // }
+      reject_box++;
       continue;
+    }
     Eigen::Vector3i idx;
     graph_->getIndex(vp, idx);
-    if (graph_->getRegionNode(idx) == nullptr)
+    if (graph_->getRegionNode(idx) == nullptr) {
+      reject_region++;
       continue;
+    }
     vps_init.emplace_back(vp.x(), vp.y(), vp.z());
   }
+  // ROS_INFO("[DEBUG initClusterViewpoints] Cluster id=%d, center=(%.2f,%.2f,%.2f): origin_vp=%lu, reject_occ=%d, reject_box=%d, reject_region=%d, vps_init=%lu",
+  //          cluster->id_, cluster->center_.x(), cluster->center_.y(), cluster->center_.z(),
+  //          origin_viewpoints_.size(), reject_occ, reject_box, reject_region, vps_init.size());
   if (vps_init.empty()) {
     cluster->is_reachable_ = false;
     return;
@@ -1309,13 +1349,23 @@ void FrontierManager::removeUnreachableViewpoints(
   }
 
   ros::Time t1 = ros::Time::now();
+  // Debug: show odom node status before insertNodes
+  // ROS_INFO("[DEBUG removeUnreachableViewpoints] odom_node=(%.2f,%.2f,%.2f), odom_neighbors=%lu, history_odom_count=%lu",
+  //          graph_->odom_node_->center_.x(), graph_->odom_node_->center_.y(), graph_->odom_node_->center_.z(),
+  //          graph_->odom_node_->neighbors_.size(), graph_->history_odom_nodes_.size());
   graph_->insertNodes(nodes2insert, true); // only_raycast=true 可以显著加速
   ros::Time t2 = ros::Time::now();
   vector<bool> vp_cluster_kept;
   vp_cluster_kept.resize(nodes2insert.size(), true);
+  int reject_no_neighbor = 0, reject_no_path = 0;
   // 可以并行
   for (int i = 0; i < nodes2insert.size(); i++) {
     if (nodes2insert[i]->neighbors_.empty()) {
+      // if (reject_no_neighbor < 2) {
+      //   ROS_INFO("[DEBUG removeUnreachableViewpoints] NO_NEIGHBOR: vp=(%.2f,%.2f,%.2f)",
+      //            nodes2insert[i]->center_.x(), nodes2insert[i]->center_.y(), nodes2insert[i]->center_.z());
+      // }
+      reject_no_neighbor++;
       vp_cluster_kept[i] = false;
       continue;
     }
@@ -1330,7 +1380,14 @@ void FrontierManager::removeUnreachableViewpoints(
         closest_node = hodom;
       }
     }
-    if (!graph_->graphSearch(closest_node, nodes2insert[i], topo_path, 3e-4)) {
+    if (!graph_->graphSearch(closest_node, nodes2insert[i], topo_path, 5e-3)) {
+      // if (reject_no_path < 2) {
+      //   ROS_INFO("[DEBUG removeUnreachableViewpoints] NO_PATH: vp=(%.2f,%.2f,%.2f), closest=(%.2f,%.2f,%.2f), neighbors=%lu",
+      //            nodes2insert[i]->center_.x(), nodes2insert[i]->center_.y(), nodes2insert[i]->center_.z(),
+      //            closest_node->center_.x(), closest_node->center_.y(), closest_node->center_.z(),
+      //            nodes2insert[i]->neighbors_.size());
+      // }
+      reject_no_path++;
       vp_cluster_kept[i] = false;
     } else {
       clusters[nodeidx2clusteridx[i]]
@@ -1338,6 +1395,9 @@ void FrontierManager::removeUnreachableViewpoints(
           .distance_ = graph_->getPathLength(topo_path);
     }
   }
+  // ROS_INFO("[DEBUG removeUnreachableViewpoints] total=%lu, reject_no_neighbor=%d, reject_no_path=%d, kept=%lu",
+  //          nodes2insert.size(), reject_no_neighbor, reject_no_path,
+  //          nodes2insert.size() - reject_no_neighbor - reject_no_path);
   graph_->removeNodes(nodes2insert);
   vector<unordered_set<int>> kept_vp_cluster;
   kept_vp_cluster.resize(clusters.size(), unordered_set<int>());

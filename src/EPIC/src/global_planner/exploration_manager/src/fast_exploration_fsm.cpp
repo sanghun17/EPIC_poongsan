@@ -115,12 +115,6 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent &e) {
     if (dist < goal_tolerance_) {
       has_goal_rth_ = false;
       global_path_update_timer_.stop();  // Stop replanning timer
-
-      // Publish RTH distance for metrics logging
-      std_msgs::Float32 dist_msg;
-      dist_msg.data = dist;
-      rth_metrics_pub_.publish(dist_msg);
-
       transitState(FINISH, "PLAN_TRAJ_RTH: goal reached");
       ROS_INFO("\033[32m[RTH] Goal reached! \033[0m");
       return;
@@ -227,10 +221,7 @@ void FastExplorationFSM::init(ros::NodeHandle &nh,
            fp_->replan_time_after_traj_start_, 0.5);
   nh.param("fsm/replan_time_before_traj_end", fp_->replan_time_before_traj_end_,
            0.5);
-  nh.param("fsm/goal_tolerance", goal_tolerance_, 0.2);
-  nh.param("fsm/local_planning_max_hz", local_planning_max_hz_, 100.0);
-  local_planning_min_period_ = 1.0 / local_planning_max_hz_;
-  ROS_INFO("Local planning max Hz: %.1f (min period: %.4f s)", local_planning_max_hz_, local_planning_min_period_);
+  nh.param("fsm/goal_tolerance", goal_tolerance_, 0.3);
   /* Initialize main modules */
   // expl_manager_.reset(new FastExplorationManager);
   // expl_manager_->initialize(nh);
@@ -275,22 +266,21 @@ void FastExplorationFSM::init(ros::NodeHandle &nh,
   time_cost_pub_ = nh.advertise<std_msgs::Float32>("/time_cost", 10);
   static_pub_ = nh.advertise<std_msgs::Bool>("/planning/static", 10);
   state_pub_ = nh.advertise<visualization_msgs::Marker>("/planning/state", 10);
-  rth_metrics_pub_ = nh.advertise<std_msgs::Float32>("/planning/rth_distance", 10);
 
   // Global planning timing publishers
-  update_topo_skeleton_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/update_topo_skeleton_cost", 10);
-  update_odom_vertex_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/update_odom_vertex_cost", 10);
-  vp_cluster_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/vp_cluster_cost", 10);
-  remove_unreachable_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/remove_unreachable_cost", 10);
-  select_vp_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/select_vp_cost", 10);
-  insert_viewpoint_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/insert_viewpoint_cost", 10);
-  calculate_tsp_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/calculate_tsp_cost", 10);
-  lkh_solver_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/lkh_solver_cost", 10);
-  call_planner_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/call_planner_cost", 10);
-  ikd_tree_insert_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/ikd_tree_insert_cost", 10);
-  update_frontier_clusters_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/update_frontier_clusters_cost", 10);
-  fast_searcher_search_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/fast_searcher_search_cost", 10);
-  bubble_astar_search_cost_pub_ = nh.advertise<std_msgs::Float32>("/planning/timing/bubble_astar_search_cost", 10);
+  update_topo_skeleton_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/update_topo_skeleton_cost", 10);
+  update_odom_vertex_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/update_odom_vertex_cost", 10);
+  vp_cluster_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/vp_cluster_cost", 10);
+  remove_unreachable_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/remove_unreachable_cost", 10);
+  select_vp_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/select_vp_cost", 10);
+  insert_viewpoint_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/insert_viewpoint_cost", 10);
+  calculate_tsp_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/calculate_tsp_cost", 10);
+  lkh_solver_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/lkh_solver_cost", 10);
+  call_planner_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/call_planner_cost", 10);
+  ikd_tree_insert_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/ikd_tree_insert_cost", 10);
+  update_frontier_clusters_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/update_frontier_clusters_cost", 10);
+  fast_searcher_search_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/fast_searcher_search_cost", 10);
+  bubble_astar_search_cost_pub_ = nh.advertise<std_msgs::Float32>("/global_planning/bubble_astar_search_cost", 10);
 
   string odom_topic, cloud_topic;
   nh.getParam("odometry_topic", odom_topic);
@@ -378,8 +368,6 @@ void FastExplorationFSM::updateTopoAndGlobalPath() {
       // Keep current state, will retry on next timer callback
       ROS_WARN("RTH global path planning failed, will retry");
     }
-    expl_manager_->frontier_manager_ptr_->viz_pocc();
-    expl_manager_->frontier_manager_ptr_->visfrtcluster();
     global_path_update_timer_.start();
     return;
   }
@@ -397,6 +385,15 @@ void FastExplorationFSM::updateTopoAndGlobalPath() {
   // }
   ROS_INFO("update topo skeleton cost: %fms, update odom vertex cost:%fms ",
            (t3 - t2).toSec() * 1000, (t4 - t3).toSec() * 1000);
+
+  // Publish timing data for global planning metrics
+  std_msgs::Float32 timing_msg;
+  timing_msg.data = (t3 - t2).toSec() * 1000;
+  update_topo_skeleton_cost_pub_.publish(timing_msg);
+
+  timing_msg.data = (t4 - t3).toSec() * 1000;
+  update_odom_vertex_cost_pub_.publish(timing_msg);
+
   Eigen::Vector3d vel = fd_->odom_vel_.cast<double>();
   Eigen::Vector3d odom = fd_->odom_pos_.cast<double>();
   int res = expl_manager_->planGlobalPath(odom, vel);
@@ -456,8 +453,6 @@ bool FastExplorationFSM::goalServiceCallback(epic_planner::GoalService::Request&
 }
 
 int FastExplorationFSM::callGoalPlanner() {
-  ros::Time planning_start_time = ros::Time::now();
-
   // Check prerequisites
   if (planner_manager_->topo_graph_->odom_node_->neighbors_.empty())
     return START_FAIL;
@@ -528,7 +523,6 @@ int FastExplorationFSM::callGoalPlanner() {
   expl_manager_->ed_->path_next_goal_.swap(path_next_goal_tmp);
 
   // Plan trajectory
-  int result;
   if (planner_manager_->planExploreTraj(expl_manager_->ed_->path_next_goal_, fd_->static_state_)) {
     traj_utils::PolyTraj poly_traj_msg;
     planner_manager_->polyTraj2ROSMsg(poly_traj_msg, info->start_time_);
@@ -538,19 +532,9 @@ int FastExplorationFSM::callGoalPlanner() {
     planner_manager_->polyYawTraj2ROSMsg(poly_yaw_traj_msg, info->start_time_);
     fd_->newest_yaw_traj_ = poly_yaw_traj_msg;
 
-    result = SUCCEED;
+    return SUCCEED;
   } else {
     ROS_ERROR("[RTH] Failed to plan trajectory");
-    result = FAIL;
+    return FAIL;
   }
-
-  // Block until minimum planning period has elapsed
-  double elapsed = (ros::Time::now() - planning_start_time).toSec();
-  if (elapsed < local_planning_min_period_) {
-    double hold_time = local_planning_min_period_ - elapsed;
-    ROS_INFO("\033[33m[Planning Hz Limit] Holding for %.3f ms (planning took %.3f ms, min period %.3f ms)\033[0m",
-             hold_time * 1000.0, elapsed * 1000.0, local_planning_min_period_ * 1000.0);
-    ros::Duration(hold_time).sleep();
-  }
-  return result;
 }
