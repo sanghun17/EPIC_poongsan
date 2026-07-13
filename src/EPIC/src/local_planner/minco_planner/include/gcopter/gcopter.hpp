@@ -934,34 +934,42 @@ public:
     minTimeBound = time_lb;
     int ret = lbfgs::lbfgs_optimize(x, minCostFunctional, &GCOPTER_PolytopeSFC::costFunctional,
                                     nullptr, nullptr, this, lbfgs_params);
-    // if (ret == lbfgs::LBFGSERR_MINIMUMSTEP) {
-    //   ROS_ERROR("min-step!!!!");
-    //   Eigen::Vector3d start = headPVAJ.col(0);
-    //   Eigen::Vector3d end = tailPVAJ.col(0);
-    //   if ((start - end).norm() > 0.5) {
-    //     minCostFunctional = INFINITY;
-    //     std::cout << "Optimization Failed: " << lbfgs::lbfgs_strerror(ret) << std::endl;
-    //   } else {
-    //     Eigen::Vector3d center = (start + end) / 2.0;
-    //     points.resize(3, 1);
-    //     points.col(0) = center;
-    //     times.resize(2);
-    //     times[0] = time_lb / 2.0;
-    //     times[1] = time_lb / 2.0;
-    //     minco.setParameters(points, times);
-    //     minco.getTrajectory(traj);
-    //   }
-
-    // } else 
     if (ret >= 0) {
       forwardT(tau, times);
       forwardP(xi, vPolyIdx, vPolytopes, points);
       minco.setParameters(points, times);
       minco.getTrajectory(traj);
     } else {
-      // traj.clear();
-      minCostFunctional = INFINITY;
-      std::cout << "Optimization Failed: " << lbfgs::lbfgs_strerror(ret) << std::endl;
+      // L-BFGS failed numerically (MINIMUMSTEP / MAXIMUMLINESEARCH). When the
+      // start and goal positions nearly coincide this is the near-stationary
+      // "rotate yaw in place" case: the spatial problem is degenerate (~0
+      // displacement, but the duration is forced up to time_lb so the vehicle
+      // has time to slew its yaw), so the line search collapses and would keep
+      // failing every replan, deadlocking the FSM in PLAN_TRAJ_EXP. Instead of
+      // failing, synthesize a valid near-hover 2-piece trajectory from the
+      // current state to rest at the goal (through the midpoint); the separate
+      // yaw optimizer (YawTrajOpt) then performs the actual rotation over it.
+      const Eigen::Vector3d start = headPVAJ.col(0);
+      const Eigen::Vector3d end = tailPVAJ.col(0);
+      const double kYawOnlyMaxDisp = 0.5; // [m] treat as in-place below this
+      if ((start - end).norm() < kYawOnlyMaxDisp) {
+        const Eigen::Vector3d center = 0.5 * (start + end);
+        const double dur = time_lb > 0.2 ? time_lb : 0.2; // floor: avoid singular MINCO
+        points.resize(3, 1); // one interior point -> two pieces
+        points.col(0) = center;
+        times.resize(2);
+        times(0) = 0.5 * dur;
+        times(1) = 0.5 * dur;
+        minco.setConditions(headPVAJ, tailPVAJ, 2); // N must match the 2 pieces
+        minco.setParameters(points, times);
+        minco.getTrajectory(traj);
+        minCostFunctional = 0.0; // finite -> planExploreTraj accepts the traj
+        std::cout << "yaw-only fallback: near-stationary traj (disp="
+                  << (start - end).norm() << "m)" << std::endl;
+      } else {
+        minCostFunctional = INFINITY;
+        std::cout << "Optimization Failed: " << lbfgs::lbfgs_strerror(ret) << std::endl;
+      }
     }
 
     return minCostFunctional;

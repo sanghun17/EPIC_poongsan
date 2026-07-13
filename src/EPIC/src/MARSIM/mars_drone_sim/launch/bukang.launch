@@ -2,30 +2,25 @@
         <arg name="use_gpu_" value="true" />
 
         <arg name="sensing_horizon" />
-        <arg name="odom_publish_rate" default="200.0" />
-        <arg name="sensing_rate" default="10.0" />
+
+        <!-- [feature: 120deg FOV sensing] cropped forward LiDAR (120deg yaw, 30deg vertical, non-360) -->
+        <arg name="lidar_yaw_fov" default="120.0" />
+        <arg name="lidar_vertical_fov" default="30.0" />
+        <arg name="lidar_is_360" default="0" />
 
         <arg name="drone_num" value="1" />
-        <!-- [feature: 120deg FOV sensing] LiDAR FOV mode (defaults = original 360deg tilted) -->
-        <arg name="lidar_pitch" default="40.0" />
-        <arg name="lidar_yaw_fov" default="360.0" />
-        <arg name="lidar_vertical_fov" default="90.0" />
-        <arg name="lidar_is_360" default="1" />
-
-        <!-- [feature: initial pose] drone spawn pose (default = garage start) -->
-        <arg name="init_x_" default="5.0" />
-        <arg name="init_y_" default="0.0" />
-        <arg name="init_z_" default="2.0" />
-        <arg name="init_yaw" default="0.0" />
+        <!-- [feature: 120deg FOV sensing] forward cropped LiDAR uses pitch 0 -->
+        <arg name="lidar_pitch" value="0.0" />
 
         <arg name="frame_id" value="world" />
         <arg name="global_cloud_topic" value="/map_generator/global_cloud" />
         <arg name="odom_topic" value="/lidar_slam/odom" />
 
 
-        <!-- <arg name="map_name" value="$(find map_generator)/resource/factory.pcd"/> -->
-        <!-- <arg name="map_name" value="$(find map_generator)/resource/cave.pcd" /> -->
-        <arg name="map_name" default="$(find map_generator)/resource/garage.pcd" />
+        <!-- ============================================================ -->
+        <!-- TODO: PLACE YOUR bukang.pcd FILE IN resource/ DIRECTORY     -->
+        <!-- ============================================================ -->
+        <arg name="map_name" value="$(find map_generator)/resource/bukang.pcd" />
         <arg name="downsample_resolution" value="0.1" />
         <arg name="use_uav_extra_model" value="0" />
 
@@ -33,10 +28,10 @@
                 args="$(arg map_name)">
                 <param name="add_boundary" value="0" />
                 <param name="is_bridge" value="0" />
-                <param name="downsample_res" value="0.01" />
-                <!-- RViz-only coarse cloud; sensor cloud stays dense at downsample_res -->
-                <param name="viz_topic" value="/map_generator/global_cloud_viz" />
-                <param name="viz_downsample_res" value="0.25" />
+                <!-- [feature: custom PCD map/bukang] bukang.pcd is ~34.8M pts (417MB);
+                     1cm voxels flood the global cloud. Match the working garage
+                     reference (0.1m) so the custom map is renderable. -->
+                <param name="downsample_res" value="0.1" />
                 <param name="map_offset_x" value="0.0" />
                 <param name="map_offset_y" value="0.0" />
                 <param name="map_offset_z" value="0.0" />
@@ -65,32 +60,14 @@
                 <arg name="drone_id" value="0" />
                 <arg name="uav_num_" value="$(arg drone_num)" />
                 <arg name="lidar_type" value="mid360" />
-                <!-- <arg name="lidar_type" value="os128"/> -->
-                <!-- <arg name="init_x_" value="-3.0"/>
-        <arg name="init_y_" value="19.0"/>
-        <arg name="init_z_" value="1.0"/>
-         -->
-                <!-- <arg name="init_x_" value="-5.0"/>
-        <arg name="init_y_" value="3.0"/>
-        <arg name="init_z_" value="2.0"/> -->
-                <!-- garage -->
-                <!-- <arg name="init_x_" value="0.0"/>
-        <arg name="init_y_" value="2.0"/>
-        <arg name="init_z_" value="3.0"/> -->
-                <!-- cave2 -->
 
-                <!-- <arg name="init_x_" value="5.0"/>
-        <arg name="init_y_" value="0.0"/>
-        <arg name="init_z_" value="2.0"/> -->
-                <!-- errt cave2 -->
-                <!-- <arg name="init_x_" value="20.0"/>
-        <arg name="init_y_" value="-38.0"/>
-        <arg name="init_z_" value="2.0"/> -->
-                <!-- sysu forest -->
-                <arg name="init_x_" value="$(arg init_x_)" />
-                <arg name="init_y_" value="$(arg init_y_)" />
-                <arg name="init_z_" value="$(arg init_z_)" />
-                <arg name="init_yaw" value="$(arg init_yaw)" />
+                <!-- Drone initial position (SLAM start point + 1.0m height) -->
+                <!-- First point from bukang.pcd: (3.90, 0.02, -0.05) -->
+                <arg name="init_x_" value="3.90" />
+                <arg name="init_y_" value="0.02" />
+                <arg name="init_z_" value="0.95" />
+                <arg name="init_yaw" value="0.0" />
+
                 <arg name="lidar_pitch_" value="$(arg lidar_pitch)" />
                 <arg name="map_name_" value="$(arg map_name)" />
                 <arg name="downsample_resolution_" value="$(arg downsample_resolution)" />
@@ -98,15 +75,10 @@
                 <arg name="use_gpu" value="$(arg use_gpu_)" />
                 <arg name="use_uav_extra_model_" value="$(arg use_uav_extra_model)" />
                 <arg name="sensing_horizon" value="$(arg sensing_horizon)" />
-                <arg name="odom_publish_rate" value="$(arg odom_publish_rate)" />
-                <arg name="sensing_rate" value="$(arg sensing_rate)" />
-                <!-- [feature: 120deg FOV sensing] pass FOV mode into the sensor sim -->
+                <!-- [feature: 120deg FOV sensing] pass cropped-LiDAR FOV into the sim -->
                 <arg name="lidar_yaw_fov" value="$(arg lidar_yaw_fov)" />
                 <arg name="lidar_vertical_fov" value="$(arg lidar_vertical_fov)" />
                 <arg name="lidar_is_360" value="$(arg lidar_is_360)" />
         </include>
-
-        <!-- <node name="rvizvisualisation" pkg="rviz" type="rviz" output="screen"
-   args="-d $(find test_interface)/config/traj.rviz" /> -->
 
 </launch>

@@ -54,6 +54,9 @@ void FrontierManager::init(ros::NodeHandle &nh, LIOInterface::Ptr &lio_interface
               vpp_.sample_pillar_min_radius_);
   nh.getParam("ViewpointManager/sample_pillar_max_radius",
               vpp_.sample_pillar_max_radius_);
+  // Viewpoint obstacle clearance [m]; default 0.9 keeps the legacy behavior for
+  // configs that don't set it (narrow corridors should lower it, e.g. ~0.45).
+  nh.param("ViewpointManager/min_clearance", vpp_.min_clearance_, 0.9f);
 
   nh.getParam("ViewpointManager/consider_range", vpp_.consider_range_);
   nh.getParam("ViewpointManager/global_recluster_size",
@@ -63,10 +66,33 @@ void FrontierManager::init(ros::NodeHandle &nh, LIOInterface::Ptr &lio_interface
   nh.getParam("lidar_perception/fov_viewpoint_up", vpp_.fov_up_);
   nh.getParam("lidar_perception/lidar_pitch", vpp_.lidar_pitch_);
   nh.getParam("lidar_perception/fov_viewpoint_down", vpp_.fov_down_);
+  // [feature: 120deg FOV sensing] limited-FOV LiDAR boundary model params
+  nh.param("lidar_perception/yaw_fov", frtp_.yaw_fov_, 360.0f);
+  nh.param("lidar_perception/is_360lidar", frtp_.is_360_lidar_, true);
+  nh.param("lidar_perception/fov_up", frtp_.fov_up_, 90.0f);
+  nh.param("lidar_perception/fov_down", frtp_.fov_down_, -90.0f);
+  nh.param("lidar_perception/lidar_pitch", frtp_.lidar_pitch_, 0.0f);
+
+  // [feature: retire-unobservable] arrival tolerances for "visited but still
+  // frontier" retirement. yaw tolerance read in degrees, stored in radians.
+  float visit_retire_yaw_deg;
+  nh.param("FrontierManager/visit_retire_dist", frtp_.visit_retire_dist_, 0.6f);
+  nh.param("FrontierManager/visit_retire_yaw_deg", visit_retire_yaw_deg, 60.0f);
+  frtp_.visit_retire_yaw_ = visit_retire_yaw_deg * M_PI / 180.0;
 
   vpp_.view_direction_range_ = cos(vpp_.view_direction_range_ * M_PI / 180.0);
   vpp_.fov_up_ = vpp_.fov_up_ * M_PI / 180.0;
   vpp_.fov_down_ = vpp_.fov_down_ * M_PI / 180.0;
+  // [feature: 120deg FOV sensing] convert FOV boundary params to radians
+  frtp_.yaw_fov_ = frtp_.yaw_fov_ * M_PI / 180.0;
+  frtp_.fov_up_ = frtp_.fov_up_ * M_PI / 180.0;
+  frtp_.fov_down_ = frtp_.fov_down_ * M_PI / 180.0;
+  frtp_.lidar_pitch_ = frtp_.lidar_pitch_ * M_PI / 180.0;
+  ROS_INFO(
+      "[FrontierManager] lidar FOV boundary model: is_360=%d yaw=%.1fdeg "
+      "pitch=[%.1f, %.1f]deg",
+      frtp_.is_360_lidar_ ? 1 : 0, frtp_.yaw_fov_ * 180.0 / M_PI,
+      frtp_.fov_down_ * 180.0 / M_PI, frtp_.fov_up_ * 180.0 / M_PI);
   frtp_.map_min_ =
       lidar_map_interface_->lp_->global_map_min_boundary_.cast<float>();
   frtp_.map_max_ =
@@ -182,6 +208,14 @@ CELL_STATE FrontierManager::get_state(const PointType &pt) {
   Eigen::Vector3i idx;
   pos2idx(pt, idx);
   return get_state(idx);
+}
+
+CELL_STATE FrontierManager::getCellState(const Eigen::Vector3f &p) {
+  PointType pt;
+  pt.x = p.x();
+  pt.y = p.y();
+  pt.z = p.z();
+  return get_state(pt);
 }
 
 CELL_STATE FrontierManager::get_state(const Eigen::Vector3i &idx) {
@@ -616,6 +650,37 @@ void FrontierManager::update_lidar_fov_edge(const vector<float> &depth) {
       }
     }
   }
+  // [feature: cropped-FOV sensing] data-driven yaw (left/right) FOV edge.
+  // The spherical image wraps in azimuth with forward at column 0, so a naive
+  // left->right scan would mis-mark the forward center. Instead sweep inward
+  // from the back (column 100 == 180 deg, guaranteed empty for a forward crop)
+  // toward forward in both directions and mark the first valid pixel per row.
+  // This is the azimuth analog of the pitch (top/bottom) scan above and needs
+  // NO angular margin: it locates the actual outermost observed cell itself.
+  if (!frtp_.is_360_lidar_ &&
+      frtp_.yaw_fov_ < 2.0f * static_cast<float>(M_PI) - 1.0e-3f) {
+    const int back_col = 100; // azimuth 180 deg, outside a forward crop
+    for (int i = 0; i < 100; i++) {
+      for (int s = 0; s < 200; s++) { // sweep back -> forward (one side)
+        const int j = (back_col + s) % 200;
+        if (depth[i * 200 + j] <= 0.1)
+          frtd_.is_fov_edge_[i * 200 + j] = true;
+        else {
+          frtd_.is_fov_edge_[i * 200 + j] = true;
+          break;
+        }
+      }
+      for (int s = 0; s < 200; s++) { // sweep back -> forward (other side)
+        const int j = (back_col - s + 200) % 200;
+        if (depth[i * 200 + j] <= 0.1)
+          frtd_.is_fov_edge_[i * 200 + j] = true;
+        else {
+          frtd_.is_fov_edge_[i * 200 + j] = true;
+          break;
+        }
+      }
+    }
+  }
   cv::Mat img_origin(100, 200, CV_8UC1);
   for (int j = 0; j < 200; j++) {
     for (int i = 0; i < 100; i++) {
@@ -626,7 +691,13 @@ void FrontierManager::update_lidar_fov_edge(const vector<float> &depth) {
 }
 
 bool FrontierManager::is_fov_edge(const PointType &pt) {
-  return frtd_.is_fov_edge_[surface_pos2idx(pt)];
+  const int idx = surface_pos2idx(pt);
+  const bool depth_image_edge =
+      idx >= 0 && idx < static_cast<int>(frtd_.is_fov_edge_.size()) &&
+      frtd_.is_fov_edge_[idx];
+  // yaw & pitch FOV edges are both marked data-driven in update_lidar_fov_edge()
+  // (self-locating, no angular margin needed).
+  return depth_image_edge;
 }
 
 void FrontierManager::updateFrontierClusters(
@@ -635,6 +706,7 @@ void FrontierManager::updateFrontierClusters(
   // ROS_INFO("[DEBUG updateFrontierClusters] Function called. Current cluster_list_ size: %lu", cluster_list_.size());
 
   PointVector frt_new;
+  fov_edge_cells_.clear(); // rebuilt below: this frame's FOV-edge frontier cells
   auto has_dense_nbr = [&](const Eigen::Vector3i &idx) -> bool {
     for (int i = -1; i <= 1; i++) {
       for (int j = -1; j <= 1; j++) {
@@ -740,6 +812,8 @@ void FrontierManager::updateFrontierClusters(
   cells_2_box_search.reserve(cells_2_update.size());
   unordered_set<Eigen::Vector3i, Vector3i_Hash> bad_dis_set, bad_dir_set;
   int dense_count = 0, force_trust_count = 0, good_count = 0;
+  // [feature: 120deg FOV sensing] diagnostic count of cells at the LiDAR FOV edge
+  int fov_edge_count = 0;
   for (int i = 0; i < cells_2_update.size(); i++) {
     ByteArrayRaw bytes;
     idx2bytes(cells_2_update[i], bytes);
@@ -750,14 +824,22 @@ void FrontierManager::updateFrontierClusters(
     PointType pt;
     idx2pos(cells_2_update[i], pt);
     float view_distance = (pt.getVector3fMap() - lidar_position).norm();
+    const bool fov_edge = is_fov_edge(pt);
+    const bool gap_point = is_gap_point(pt);
+    if (fov_edge) {
+      fov_edge_count++;
+      // Cell reached here => not already DENSE => it becomes a FOV-edge frontier.
+      // Record its world position for the local planner's cone clipping.
+      fov_edge_cells_.push_back(pt);
+    }
     if (view_distance < frtp_.good_observation_force_trust_length_ &&
-        !is_fov_edge(pt)) {
+        !fov_edge) {
       // if (view_distance < frtp_.good_observation_force_trust_length_) {
       frtd_.label_map_[bytes] = DENSE;
       force_trust_count++;
       continue;
     }
-    bool bad_dir = is_gap_point(pt) || is_fov_edge(pt);
+    bool bad_dir = gap_point || fov_edge;
     bool bad_dis = view_distance > frtp_.good_observation_trust_length_;
     if (!bad_dir && !bad_dis) {
       frtd_.label_map_[bytes] = DENSE;
@@ -771,8 +853,13 @@ void FrontierManager::updateFrontierClusters(
     cells_2_box_search.push_back(cells_2_update[i]);
   }
 
-  // ROS_INFO("[DEBUG] Filtered cells: dense=%d, force_trust=%d, good=%d, bad_dis=%lu, bad_dir=%lu, cells_2_box_search=%lu",
-  //          dense_count, force_trust_count, good_count, bad_dis_set.size(), bad_dir_set.size(), cells_2_box_search.size());
+  ROS_INFO_THROTTLE(
+      1.0,
+      "[FrontierManager] classify cells: dense=%d force=%d good=%d "
+      "bad_dis=%zu bad_dir=%zu fov_edge=%d search=%zu",
+      dense_count, force_trust_count, good_count, bad_dis_set.size(),
+      bad_dir_set.size(), fov_edge_count,
+      cells_2_box_search.size());
   // Step3: 分类，距离过长 || 视角过大->bad ,
   // 但要计算法向量判断一下是否是噪声点，如果是噪声点也设成good
   vector<PointVector> pts_inside;
@@ -1140,6 +1227,17 @@ void FrontierManager::selectBestViewpoint(ClusterInfo::Ptr &cluster) {
                                              pt2see.y() * pt2see.y()));
         if (pitch > vpp_.fov_up_ || pitch < vpp_.fov_down_)
           continue;
+        // Horizontal FOV gate for a non-360 LiDAR: at this candidate yaw the
+        // sensor only sees cells within +/- yaw_fov/2 of its heading. Without
+        // it the score counts frontier all around the viewpoint (and, with
+        // lidar_pitch==0, the pitch test above is yaw-invariant so every yaw
+        // bin ties and the heading is picked arbitrarily), so the robot drives
+        // to a viewpoint that "should" reveal cells it physically cannot see.
+        if (!frtp_.is_360_lidar_) {
+          float azimuth = atan2(pt2see.y(), pt2see.x());
+          if (fabs(azimuth) > 0.5f * frtp_.yaw_fov_)
+            continue;
+        }
         yaw_score[j + 4]++;
       }
     }
@@ -1164,8 +1262,21 @@ void FrontierManager::selectBestViewpoint(ClusterInfo::Ptr &cluster) {
     cluster->is_reachable_ = true;
     cluster->best_vp_yaw_ = yaw[best_vp_idx];
     cluster->best_vp_ = vps[best_vp_idx].getVector3fMap();
-    if (((cluster->best_vp_ - graph_->odom_node_->center_).norm() < 1e-2) &&
-        (fabs(cluster->best_vp_yaw_ - graph_->odom_node_->yaw_) < 1e-2)) {
+    // [feature: retire-unobservable] "arrived but can't see": the robot is at
+    // this frontier's best viewpoint (within visit_retire_dist_) and roughly
+    // facing it (heading within visit_retire_yaw_), yet the cells are STILL
+    // frontier -> even the optimal pose can't resolve them (VFOV-limited wall
+    // edges, etc.). Mark dormant so the retirement pass below drops them to
+    // DENSE instead of circling forever. (Was 1e-2/1e-2, i.e. never fired.)
+    float arrive_dist =
+        (cluster->best_vp_ - graph_->odom_node_->center_).norm();
+    float yaw_err = cluster->best_vp_yaw_ - graph_->odom_node_->yaw_;
+    while (yaw_err > M_PI)
+      yaw_err -= 2.0 * M_PI;
+    while (yaw_err < -M_PI)
+      yaw_err += 2.0 * M_PI;
+    if (arrive_dist < frtp_.visit_retire_dist_ &&
+        fabs(yaw_err) < frtp_.visit_retire_yaw_) {
       cluster->is_reachable_ = false;
       cluster->is_dormant_ = true;
       cluster->vp_clusters_.clear();
@@ -1188,7 +1299,7 @@ void FrontierManager::initClusterViewpoints(ClusterInfo::Ptr &cluster) {
   vps_init.reserve(origin_viewpoints_.size());
   for (auto &ovp : origin_viewpoints_) {
     Eigen::Vector3f vp = ovp + cluster->center_;
-    if (lidar_map_interface_->getDisToOcc(vp) < 0.9)
+    if (lidar_map_interface_->getDisToOcc(vp) < vpp_.min_clearance_)
       continue;
     if (!isInBox(vp))
       continue;

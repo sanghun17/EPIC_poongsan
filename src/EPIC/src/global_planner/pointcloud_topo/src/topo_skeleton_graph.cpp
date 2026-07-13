@@ -35,6 +35,9 @@ void TopoGraph::init(ros::NodeHandle &nh, LIOInterface::Ptr &lidar_map, Parallel
   nh.param("bubble_topo/bubble_min_radius", bubble_min_radius_, 0.5);
   nh.param("bubble_topo/frontier_bubble_min_radius", frt_bubble_radius_, 0.5);
   nh.param("bubble_topo/cube_discrete_size", cube_discrete_size, 0.3);
+  // Odom-trail node spacing [m]. Default 5.0 = the old hardcoded value in
+  // updateHistoricalOdoms(); lower it (e.g. ~1.0) for narrow/twisty corridors.
+  nh.param("bubble_topo/odom_node_distance", odom_node_distance_, 5.0);
 
   nh.getParam("parallel_astar/update_connection_timeout", update_connection_timeout);
   nh.getParam("parallel_astar/insert_node_timeout", insert_node_timeout);

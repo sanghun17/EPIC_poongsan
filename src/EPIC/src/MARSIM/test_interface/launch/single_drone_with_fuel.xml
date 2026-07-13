@@ -12,17 +12,27 @@
     <arg name="use_gpu" />
     <arg name="use_uav_extra_model_" />
     <arg name="sensing_horizon" />
+    <!-- [feature: 120deg FOV sensing] cropped-LiDAR params.
+         Defaults preserve the original 360deg LiDAR; launches opt into a
+         limited FOV by passing lidar_yaw_fov/lidar_vertical_fov/lidar_is_360. -->
+    <arg name="lidar_yaw_fov" default="360.0" />
+    <arg name="lidar_vertical_fov" default="90.0" />
+    <arg name="lidar_is_360" default="1" />
     <arg name="lidar_pitch_" />
+    <arg name="odom_publish_rate" default="200.0" />
+    <arg name="sensing_rate" default="10.0" />
 
 
     <node pkg="mars_drone_sim" name="quad$(arg drone_id)_quadrotor_dynamics"
         type="quadrotor_dynamics_node"
         output="log">
         <remap from="~odom" to="/quad_$(arg drone_id)/$(arg odom_topic)" />
+        <remap from="~odom_throttled" to="/quad_$(arg drone_id)/$(arg odom_topic)_throttled" />
         <remap from="~cmd_RPM" to="/quad_$(arg drone_id)/cmdRPM" />
         <remap from="~imu" to="/quad_$(arg drone_id)/imu" />
         <param name="mass" value="1.9" />
         <param name="simulation_rate" value="200" />
+        <param name="odom_publish_rate" value="$(arg odom_publish_rate)" />
         <param name="quadrotor_name" value="quad_$(arg drone_id)" />
         <param name="init_state_x" value="$(arg init_x_)" />
         <param name="init_state_y" value="$(arg init_y_)" />
@@ -60,7 +70,7 @@
                 <param name="uav_num" value="$(arg uav_num_)" />
                 <param name="is_360lidar" value="0" />
                 <param name="sensing_horizon" value="30.0" />
-                <param name="sensing_rate" value="10.0" />
+                <param name="sensing_rate" value="$(arg sensing_rate)" />
                 <param name="estimation_rate" value="10.0" />
                 <param name="polar_resolution" value="0.2" />
                 <param name="yaw_fov" value="70.4" />
@@ -101,13 +111,13 @@
                 <param name="lidar_pitch" value="$(arg lidar_pitch_)" />
                 <param name="quadrotor_name" value="quad_$(arg drone_id)" />
                 <param name="uav_num" value="$(arg uav_num_)" />
-                <param name="is_360lidar" value="1" />
+                <param name="is_360lidar" value="$(arg lidar_is_360)" /><!-- [feature: 120deg FOV sensing] -->
                 <param name="sensing_horizon" value="$(arg sensing_horizon)" />
-                <param name="sensing_rate" value="10.0" />
+                <param name="sensing_rate" value="$(arg sensing_rate)" />
                 <param name="estimation_rate" value="10.0" />
                 <param name="polar_resolution" value="0.2" />
-                <param name="yaw_fov" value="360.0" />
-                <param name="vertical_fov" value="90.0" />
+                <param name="yaw_fov" value="$(arg lidar_yaw_fov)" /><!-- [feature: 120deg FOV sensing] -->
+                <param name="vertical_fov" value="$(arg lidar_vertical_fov)" /><!-- [feature: 120deg FOV sensing] -->
                 <param name="min_raylength" value="1.0" />
                 <param name="livox_linestep" value="1.4" />
                 <param name="curvature_limit" value="100.0" />
@@ -147,7 +157,7 @@
                 <param name="uav_num" value="$(arg uav_num_)" />
                 <param name="is_360lidar" value="1" />
                 <param name="sensing_horizon" value="100.0" />
-                <param name="sensing_rate" value="3.0" />
+                <param name="sensing_rate" value="$(arg sensing_rate)" />
                 <param name="estimation_rate" value="10.0" />
                 <param name="polar_resolution" value="0.2" />
                 <param name="yaw_fov" value="360.0" />
@@ -194,7 +204,7 @@
                 <param name="uav_num" value="$(arg uav_num_)" />
                 <param name="is_360lidar" value="0" />
                 <param name="sensing_horizon" value="30.0" />
-                <param name="sensing_rate" value="10.0" />
+                <param name="sensing_rate" value="$(arg sensing_rate)" />
                 <param name="estimation_rate" value="10.0" />
                 <param name="polar_resolution" value="0.2" />
                 <param name="yaw_fov" value="70.4" />
@@ -236,15 +246,15 @@
                 <param name="drone_id" value="$(arg drone_id)" />
                 <param name="quadrotor_name" value="quad_$(arg drone_id)" />
                 <param name="uav_num" value="$(arg uav_num_)" />
-                <param name="is_360lidar" value="1" />
+                <param name="is_360lidar" value="$(arg lidar_is_360)" /><!-- [feature: 120deg FOV sensing] -->
                 <param name="sensing_horizon" value="$(arg sensing_horizon)" />
-                <param name="sensing_rate" value="10.0" />
+                <param name="sensing_rate" value="$(arg sensing_rate)" />
                 <param name="estimation_rate" value="10.0" />
                 <param name="polar_resolution" value="0.1" />
-                <param name="yaw_fov" value="360.0" />
-                <param name="lidar_pitch" value="20" />
+                <param name="yaw_fov" value="$(arg lidar_yaw_fov)" /><!-- [feature: 120deg FOV sensing] -->
+                <param name="lidar_pitch" value="$(arg lidar_pitch_)" /><!-- [feature: 120deg FOV sensing] -->
                 <!-- <param name="vertical_fov" value="90.0"/> -->
-                <param name="vertical_fov" value="56.0" />
+                <param name="vertical_fov" value="$(arg lidar_vertical_fov)" /><!-- [feature: 120deg FOV sensing] -->
                 <param name="min_raylength" value="0.1" />
                 <param name="livox_linestep" value="1.4" />
                 <param name="curvature_limit" value="100.0" />
@@ -284,7 +294,7 @@
                 <param name="uav_num" value="$(arg uav_num_)" />
                 <param name="is_360lidar" value="1" />
                 <param name="sensing_horizon" value="15.0" />
-                <param name="sensing_rate" value="10.0" />
+                <param name="sensing_rate" value="$(arg sensing_rate)" />
                 <param name="estimation_rate" value="10.0" />
                 <param name="polar_resolution" value="0.2" />
                 <param name="yaw_fov" value="360.0" />
@@ -326,7 +336,7 @@
                 <param name="uav_num" value="$(arg uav_num_)" />
                 <param name="is_360lidar" value="1" />
                 <param name="sensing_horizon" value="100.0" />
-                <param name="sensing_rate" value="3.0" />
+                <param name="sensing_rate" value="$(arg sensing_rate)" />
                 <param name="estimation_rate" value="10.0" />
                 <param name="polar_resolution" value="0.2" />
                 <param name="yaw_fov" value="360.0" />
@@ -371,7 +381,7 @@
                 <param name="uav_num" value="$(arg uav_num_)" />
                 <param name="is_360lidar" value="1" />
                 <param name="sensing_horizon" value="100.0" />
-                <param name="sensing_rate" value="10.0" />
+                <param name="sensing_rate" value="$(arg sensing_rate)" />
                 <param name="estimation_rate" value="10.0" />
                 <param name="polar_resolution" value="0.2" />
                 <param name="yaw_fov" value="360.0" />

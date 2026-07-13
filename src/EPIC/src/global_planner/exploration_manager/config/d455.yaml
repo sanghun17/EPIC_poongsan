@@ -44,13 +44,15 @@ FrontierManager/cluster_min_size: 0.5  # Min cluster bounding box size to keep
 FrontierManager/cluster_min_radius: 2.0  # DBSCAN epsilon: max distance to search for neighbors. Higher = scattered points can cluster.
 FrontierManager/cluster_direction_radius: -0.5  # Min dot product of normals to be neighbors. Range [-1,1]. Lower = different orientations can cluster (e.g. coner is one cluster)
 FrontierManager/cluster_minmum_point_num: 2  # Min points to form cluster. Was 3
-ViewpointManager/sample_pillar_min_height: 0.5
-ViewpointManager/sample_pillar_max_height: 2.0
+# [corridor tuning] pillar sampling fitted to ~2m corridor (half-width 1m)
+ViewpointManager/sample_pillar_min_height: -0.3   # sample at/below the frontier height
+ViewpointManager/sample_pillar_max_height: 0.6    # stay under ceiling (~+1m)
 ViewpointManager/sample_pillar_height_layer_num: 3
-ViewpointManager/sample_pillar_min_radius: 0.5
-ViewpointManager/sample_pillar_max_radius: 2.0
+ViewpointManager/sample_pillar_min_radius: 0.3    # don't sink into the walls
+ViewpointManager/sample_pillar_max_radius: 0.9    # keep inside the 1m half-width
 ViewpointManager/sample_pillar_radius_layer_num: 3
-ViewpointManager/sample_pillar_circle_sample_num: 8
+ViewpointManager/sample_pillar_circle_sample_num: 12  # finer azimuth for narrow space
+ViewpointManager/min_clearance: 0.45              # [extracted param] viewpoint clearance (was hardcoded 0.9)
 ViewpointManager/local_tsp_size: 20
 # area
 box_num: 1
@@ -59,6 +61,18 @@ box_0/up: [50.0, 50.0, 10.0]
 dead_area_num: 0
 # trajectory param
 max_traj_len: 10.0
+# --- Local SFC corridor clipping to the observed region (forward-FOV safety) ---
+# Injects observed-boundary (frontier) cells as pseudo-obstacles so the local
+# corridor closes at the edge of what the sensor has seen, and prepends a
+# robot-sized free box (P0) at the current pose as a seed. Enabled here for the
+# real D455 (forward-FOV) drone; omit these keys (or set false) for 360-deg sim.
+local_planning/clip_corridor_to_observed: true
+local_planning/p0_len_x: 0.6   # P0 body-x (fwd/back) full length; keep <= 2*DilateRadiusHard (=1.0)
+local_planning/p0_len_y: 0.6   # P0 body-y (left/right) full length
+local_planning/p0_up: 0.2      # P0 extent above the flight controller
+local_planning/p0_down: 0.2    # P0 extent below the flight controller
+local_planning/frontier_pt_dilate: 0.0  # reserved (Step 5); unused in Phase 1
+local_planning/viz_origin_corridor: true # DEBUG: also publish original (unclipped) corridor in orange; costs 1 extra convexCover/replan — turn off for production
 DilateRadiusSoft: 0.6
 DilateRadiusHard: 0.5
 MaxCorridorSize: 3.5

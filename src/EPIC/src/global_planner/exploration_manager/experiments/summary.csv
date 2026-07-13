@@ -1,0 +1,2 @@
+timestamp,mission_duration_s,rth_origin_error_m,avg_flight_speed_mps,tracking_rmse_m,final_exploration_rate,total_voxels,explored_voxels,finish_x,finish_y,finish_z,origin_x,origin_y,origin_z,speed_samples_count,tracking_samples_count
+2026-07-13 20:06:21,86.10,172.1614,3.0091,0.0590,0.065416,267991,17531,173.2786,36.3531,1.4339,5.0000,0.0000,2.0000,17218,17211

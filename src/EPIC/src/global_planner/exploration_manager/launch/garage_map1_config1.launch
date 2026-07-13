@@ -1,0 +1,27 @@
+<launch>
+  <!-- Combo 1/4:  map1 = garage           x  config1 = 360deg LiDAR (original)
+       Equivalent to the original garage.launch.  roslaunch epic_planner garage_map1_config1.launch -->
+
+  <!-- ======== SET THIS LAUNCH'S DRONE START POSE HERE ========
+       Editable in-file, or override on the CLI, e.g.:
+         roslaunch epic_planner garage_map1_config1.launch init_x:=10 init_y:=5 init_z:=2 -->
+  <arg name="init_x"   default="5.0" />
+  <arg name="init_y"   default="0.0" />
+  <arg name="init_z"   default="2.0" />
+  <arg name="init_yaw" default="0.0" />
+  <!-- ========================================================= -->
+
+  <include file="$(find epic_planner)/launch/garage_base.launch">
+    <arg name="map_name" value="garage" />
+    <arg name="config_file" value="garage.yaml" />
+    <!-- config1: original 360deg tilted LiDAR -->
+    <arg name="lidar_yaw_fov" value="360.0" />
+    <arg name="lidar_vertical_fov" value="90.0" />
+    <arg name="lidar_is_360" value="1" />
+    <arg name="lidar_pitch" value="40.0" />
+    <arg name="init_x" value="$(arg init_x)" />
+    <arg name="init_y" value="$(arg init_y)" />
+    <arg name="init_z" value="$(arg init_z)" />
+    <arg name="init_yaw" value="$(arg init_yaw)" />
+  </include>
+</launch>

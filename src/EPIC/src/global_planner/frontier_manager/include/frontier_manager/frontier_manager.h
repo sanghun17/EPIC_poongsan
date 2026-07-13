@@ -43,6 +43,15 @@ struct FrontierParam {
   float good_observation_trust_length_;
   float update_length_;
   float good_observation_force_trust_length_;
+  // [feature: 120deg FOV sensing] limited-FOV LiDAR boundary model
+  float fov_up_, fov_down_, lidar_pitch_;
+  float yaw_fov_;
+  // [feature: retire-unobservable] once the robot has reached a frontier's best
+  // viewpoint (within visit_retire_dist_, heading within visit_retire_yaw_) but
+  // the cells are STILL frontier, the sensor geometrically cannot resolve them
+  // (e.g. wall top/bottom edge beyond a 30deg VFOV from reachable space) -> stop
+  // chasing and retire them to DENSE.
+  float visit_retire_dist_, visit_retire_yaw_;
   int dense_cell_cloud_num_;
   int sparse_cell_cloud_num_;
   int noise_cell_range_;
@@ -53,6 +62,8 @@ struct FrontierParam {
   Eigen::Vector3i bits_need_;
   uint8_t idx_byte_size_;
   bool view_cluster_, view_frt_;
+  // [feature: 120deg FOV sensing] false for cropped (non-360) LiDAR
+  bool is_360_lidar_;
 };
 
 struct ViewpointParam {
@@ -61,6 +72,9 @@ struct ViewpointParam {
   float sample_pillar_min_height_, sample_pillar_max_height_,
       sample_pillar_min_radius_, sample_pillar_max_radius_,
       view_direction_range_;
+  // Min clearance [m] a viewpoint must keep from occupied space
+  // (ViewpointManager/min_clearance). Was a hardcoded 0.9 magic number.
+  float min_clearance_;
   float fov_up_, fov_down_, lidar_pitch_;
   int consider_range_, global_recluster_size_, local_tsp_size_;
 };
@@ -270,6 +284,17 @@ public:
   // unordered_map<int, ClusterInfo::Ptr> new_clusters_;
   std::list<ClusterInfo::Ptr> cluster_list_;
   void printMemoryCost();
+
+  // Public accessors for corridor cone-clipping (local planner). Query the
+  // observed-cell map (DENSE/SPARSE/FRONTIER/UNKNOWN) at a world position and
+  // the cell size used to step to neighbors. Method decls only -> no layout change.
+  CELL_STATE getCellState(const Eigen::Vector3f &p);
+  float getCellSize() const { return frtp_.cell_size_; }
+  // World positions of this frame's FOV-edge frontier cells (the cells the sensor
+  // FOV boundary hit that are not yet well observed). Rebuilt every
+  // updateFrontierClusters. Lets the local planner cone-clip against just these
+  // instead of scanning every cluster cell.
+  PointVector fov_edge_cells_;
 
   void viz_pocc();
   void viz_point(PointVector &pts2viz, string topic_name);

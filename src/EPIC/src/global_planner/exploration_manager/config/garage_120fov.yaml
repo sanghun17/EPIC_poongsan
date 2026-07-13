@@ -23,11 +23,15 @@ bubble_astar/safe_distance: 0.6
 max_update_region_num: 99999999
 frontier/candidate_dphi: 0.26
 frontier/candidate_znum: 3
-lidar_perception/fov_up: 52.0
-lidar_perception/fov_down: -7.0
-lidar_perception/lidar_pitch: 40.0
-lidar_perception/fov_viewpoint_up: 48.0
-lidar_perception/fov_viewpoint_down: -5.0
+# [feature: 120deg FOV sensing] cropped (non-360) forward LiDAR model.
+# This is the only block that differs from garage.yaml (config1 / 360deg).
+lidar_perception/fov_up: 15.0
+lidar_perception/fov_down: -15.0
+lidar_perception/lidar_pitch: 0.0
+lidar_perception/fov_viewpoint_up: 15.0
+lidar_perception/fov_viewpoint_down: -15.0
+lidar_perception/yaw_fov: 120.0
+lidar_perception/is_360lidar: false
 lidar_perception/max_ray_length: 18
 parallel_astar/update_connection_timeout: 0.002
 parallel_astar/insert_node_timeout: 0.002
@@ -38,24 +42,24 @@ FrontierManager/good_observation_force_trust_length: 4.0
 FrontierManager/good_observation_trust_length: 12.0
 FrontierManager/update_length: 15.0 # 比trust_length长一点就行，多了没用
 FrontierManager/cluster_max_size: 7.5
-FrontierManager/cluster_min_size: 2.0
+FrontierManager/cluster_min_size: 3.0
 FrontierManager/cluster_min_radius: 1.0 # DBSCAN 判断邻居的阈值
-FrontierManager/cluster_direction_radius: 0.15 # cos(theta) > cluster_direction_radius
+FrontierManager/cluster_direction_radius: 0.5 # cos(theta) > cluster_direction_radius
 FrontierManager/cluster_minmum_point_num: 5
 # 柱形采样
 # [corridor tuning] pillar sampling fitted to ~2m corridor (half-width 1m)
-ViewpointManager/sample_pillar_min_height: -0.3   # sample at/below the frontier height
-ViewpointManager/sample_pillar_max_height: 0.6    # stay under ceiling (~+1m)
-ViewpointManager/sample_pillar_height_layer_num: 3
-ViewpointManager/sample_pillar_min_radius: 0.3    # don't sink into the walls
-ViewpointManager/sample_pillar_max_radius: 0.9    # keep inside the 1m half-width
-ViewpointManager/sample_pillar_radius_layer_num: 3
-ViewpointManager/sample_pillar_circle_sample_num: 12  # finer azimuth for narrow space
+ViewpointManager/sample_pillar_min_height: -1.0   # sample at/below the frontier height
+ViewpointManager/sample_pillar_max_height: 3.0    # stay under ceiling (~+1m)
+ViewpointManager/sample_pillar_height_layer_num: 5
+ViewpointManager/sample_pillar_min_radius: 0.5    # don't sink into the walls
+ViewpointManager/sample_pillar_max_radius: 5.0    # keep inside the 1m half-width
+ViewpointManager/sample_pillar_radius_layer_num: 5
+ViewpointManager/sample_pillar_circle_sample_num: 8  # finer azimuth for narrow space
 ViewpointManager/min_clearance: 0.45              # [extracted param] viewpoint clearance (was hardcoded 0.9)
 ViewpointManager/local_tsp_size: 20
 # area
 box_num: 1
-box_0/down: [-10.0, -6.0, -0.2]
+box_0/down: [-10.0, -6.0, 0.2]
 box_0/up: [182.0, 150.2, 3.8]
 dead_area_num: 0
 # trajectory param
@@ -71,6 +75,9 @@ local_planning/p0_up: 0.2      # P0 extent above the flight controller
 local_planning/p0_down: 0.2    # P0 extent below the flight controller
 local_planning/frontier_pt_dilate: 0.0  # reserved (Step 5); unused in Phase 1
 local_planning/viz_origin_corridor: true # DEBUG: also publish original (unclipped) corridor in orange; costs 1 extra convexCover/replan — turn off for production
+# --- observed-clipping method selection (both under clip_corridor_to_observed) ---
+local_planning/clip_inject_frontier_points: false # Method A: frontier cells as pseudo-obstacle points (OFF)
+local_planning/clip_cone_faces: true              # Method B: intersect polytopes with FOV cone half-planes, gated per-face by DENSE-outside (ON)
 DilateRadiusSoft: 0.6 # minco threshold
 DilateRadiusHard: 0.5 # collision check threshold
 MaxCorridorSize: 3.5

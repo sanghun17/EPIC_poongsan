@@ -136,13 +136,19 @@ void FrontierManager::generateTSPViewpoints(Eigen::Vector3f&center,  vector<Topo
   for (int i = 0; i < clusters_can_be_searched_.size(); i++) {
     auto cluster = clusters_can_be_searched_[i];
     selectBestViewpoint(cluster);
+    // "Arrived but can't see" clusters come back dormant AND unreachable; retire
+    // them (cells -> DENSE) below. This must run BEFORE the !is_reachable_ skip,
+    // and key by cluster->id_ to match the remove_if lambda (was `i`, the loop
+    // index, which never matched -> the whole retirement path never fired).
+    if (cluster->is_dormant_) {
+      mtx.lock();
+      cluster2remove.insert(cluster->id_);
+      mtx.unlock();
+    }
     if (!cluster->is_reachable_)
       continue;
     mtx.lock();
     tsp_clusters.push_back(cluster);
-    if (cluster->is_dormant_) {
-      cluster2remove.insert(i);
-    }
     mtx.unlock();
   }
   // 飞到但看不到，说明odom漂了，这篇工作不处理，直接跳过

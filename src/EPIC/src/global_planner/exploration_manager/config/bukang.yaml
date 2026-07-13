@@ -1,5 +1,5 @@
 #topic param:
-odometry_topic: /quad_0/lidar_slam/odom_throttled
+odometry_topic: /quad_0/lidar_slam/odom
 cloud_topic: /quad0_pcl_render_node/cloud
 global_planning/w_vdir: 1.2
 global_planning/w_yawdir: 0.0
@@ -17,17 +17,20 @@ bubble_topo/init_region_size_x: 2.5
 bubble_topo/init_region_size_y: 2.5
 bubble_topo/init_region_size_z: 2.0
 bubble_topo/cube_discrete_size: 0.25
-bubble_topo/odom_node_distance: 5.0   # map1: keep original hardcoded odom-trail spacing
+bubble_topo/odom_node_distance: 3.0
 bubble_astar/safe_distance: 0.6
 # map param
 max_update_region_num: 99999999
 frontier/candidate_dphi: 0.26
 frontier/candidate_znum: 3
-lidar_perception/fov_up: 52.0
-lidar_perception/fov_down: -7.0
-lidar_perception/lidar_pitch: 40.0
-lidar_perception/fov_viewpoint_up: 48.0
-lidar_perception/fov_viewpoint_down: -5.0
+# [feature: 120deg FOV sensing] cropped (non-360) forward LiDAR model
+lidar_perception/fov_up: 15.0
+lidar_perception/fov_down: -15.0
+lidar_perception/lidar_pitch: 0.0
+lidar_perception/fov_viewpoint_up: 15.0
+lidar_perception/fov_viewpoint_down: -15.0
+lidar_perception/yaw_fov: 120.0
+lidar_perception/is_360lidar: false
 lidar_perception/max_ray_length: 18
 parallel_astar/update_connection_timeout: 0.002
 parallel_astar/insert_node_timeout: 0.002
@@ -43,40 +46,30 @@ FrontierManager/cluster_min_radius: 1.0 # DBSCAN 判断邻居的阈值
 FrontierManager/cluster_direction_radius: 0.15 # cos(theta) > cluster_direction_radius
 FrontierManager/cluster_minmum_point_num: 5
 # 柱形采样
-# [corridor tuning] pillar sampling fitted to ~2m corridor (half-width 1m)
-ViewpointManager/sample_pillar_min_height: -0.3   # sample at/below the frontier height
-ViewpointManager/sample_pillar_max_height: 0.6    # stay under ceiling (~+1m)
+ViewpointManager/sample_pillar_min_height: 1.0
+ViewpointManager/sample_pillar_max_height: 3.5
 ViewpointManager/sample_pillar_height_layer_num: 3
-ViewpointManager/sample_pillar_min_radius: 0.3    # don't sink into the walls
-ViewpointManager/sample_pillar_max_radius: 0.9    # keep inside the 1m half-width
+ViewpointManager/sample_pillar_min_radius: 1.5
+ViewpointManager/sample_pillar_max_radius: 4.0
 ViewpointManager/sample_pillar_radius_layer_num: 3
-ViewpointManager/sample_pillar_circle_sample_num: 12  # finer azimuth for narrow space
-ViewpointManager/min_clearance: 0.45              # [extracted param] viewpoint clearance (was hardcoded 0.9)
+ViewpointManager/sample_pillar_circle_sample_num: 8
 ViewpointManager/local_tsp_size: 20
 # area
+# Exploration boundaries automatically calculated from bukang.pcd
+# Map extent: X[-23.27, 120.07], Y[-32.80, 14.01], Z[-13.21, 13.44]
+# Total points: 34,767,027
 box_num: 1
-box_0/down: [-10.0, -6.0, -0.2]
-box_0/up: [182.0, 150.2, 3.8]
+box_0/down: [-23.27, -32.80, -13.21]
+box_0/up: [120.07, 14.01, 13.44]
 dead_area_num: 0
 # trajectory param
 max_traj_len: 10.0
-# --- Local SFC corridor clipping to the observed region (forward-FOV safety) ---
-# Injects observed-boundary (frontier) cells as pseudo-obstacles so the local
-# corridor closes at the edge of what the sensor has seen, and prepends a
-# robot-sized free box (P0) at the current pose as a seed.
-local_planning/clip_corridor_to_observed: true
-local_planning/p0_len_x: 0.6   # P0 body-x (fwd/back) full length; keep <= 2*DilateRadiusHard (=1.0)
-local_planning/p0_len_y: 0.6   # P0 body-y (left/right) full length
-local_planning/p0_up: 0.2      # P0 extent above the flight controller
-local_planning/p0_down: 0.2    # P0 extent below the flight controller
-local_planning/frontier_pt_dilate: 0.0  # reserved (Step 5); unused in Phase 1
-local_planning/viz_origin_corridor: true # DEBUG: also publish original (unclipped) corridor in orange; costs 1 extra convexCover/replan — turn off for production
 DilateRadiusSoft: 0.6 # minco threshold
 DilateRadiusHard: 0.5 # collision check threshold
 MaxCorridorSize: 3.5
 MaxVelMag: 4.0
 maxBdrMag: 10000.0
-MaxTiltAngle: 0.5 # 最大飞行姿态角度 60°:1.0472 45°:0.7854 30°:0.5236 10°:0.1745
+MaxTiltAngle: 0.5 # 최대 비행 자세 각도 60°:1.0472 45°:0.7854 30°:0.5236 10°:0.1745
 MinThrust: 15.0
 MaxThrust: 22.0
 VehicleMass: 1.9
@@ -99,4 +92,3 @@ yaw_time_fwd: 3.0
 # FSM param
 fsm/goal_tolerance: 0.2
 fsm/max_segment_length: 99.0
-fsm/local_planning_max_hz: 30.0  # Max local planning frequency (Hz). Lower to simulate slow planning.

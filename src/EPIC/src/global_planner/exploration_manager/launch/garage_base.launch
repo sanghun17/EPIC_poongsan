@@ -1,14 +1,35 @@
 <launch>
+  <!-- ============================================================= -->
+  <!-- Parameterized garage engine. Not meant to be run directly;    -->
+  <!-- the combo wrappers (garage_map*_config*.launch) include this   -->
+  <!-- with a specific (map, sensor-config) pair.                     -->
+  <!--                                                                -->
+  <!--   map_name : pcd/eval basename in map_generator/resource/      -->
+  <!--              e.g. "garage" or "poongsan_garage"                -->
+  <!--   config_file : exploration yaml in epic_planner/config/       -->
+  <!--              e.g. "garage.yaml" (360) or "garage_120fov.yaml"  -->
+  <!--   lidar_* : MARSIM sensor FOV (360deg default / 120deg crop)   -->
+  <!-- ============================================================= -->
+
   <!-- Static transforms for frame compatibility -->
   <node pkg="tf" type="static_transform_publisher" name="odom_to_world"
         args="0 0 0 0 0 0 odom world 100" />
-
   <node pkg="tf" type="static_transform_publisher" name="odom_to_map"
         args="0 0 0 0 0 0 odom map 100" />
 
-  <!-- Map configuration -->
-  <arg name="map_name" value="garage" />
-  <arg name="config_file" default="$(arg map_name).yaml" />
+  <!-- Map + sensor-config selection (overridden by the combo wrappers) -->
+  <arg name="map_name" default="garage" />
+  <arg name="config_file" default="garage.yaml" />
+  <!-- [feature: 120deg FOV sensing] sensor FOV mode (defaults = original 360deg) -->
+  <arg name="lidar_yaw_fov" default="360.0" />
+  <arg name="lidar_vertical_fov" default="90.0" />
+  <arg name="lidar_is_360" default="1" />
+  <arg name="lidar_pitch" default="40.0" />
+  <!-- [feature: initial pose] drone spawn pose (per-map; default = garage start) -->
+  <arg name="init_x" default="5.0" />
+  <arg name="init_y" default="0.0" />
+  <arg name="init_z" default="2.0" />
+  <arg name="init_yaw" default="0.0" />
 
   <!-- rviz corridor(polytope) 가시화 on/off (default true). visualize_corridor:=false 로 끔 -->
   <arg name="visualize_corridor" default="true" />
@@ -20,9 +41,15 @@
   <!-- Odometry topic (configure based on your odometry source) -->
   <arg name="odom_topic" default="/quad_0/lidar_slam/odom" />
 
-  <!-- Evaluation parameters -->
+  <!-- Evaluation parameters (bounds follow the map; defaults = garage extent) -->
   <arg name="eval_output_dir" default="$(find epic_planner)/experiments" />
   <arg name="eval_auto_shutdown" default="false" />
+  <arg name="eval_map_min_x" default="-10.0" />
+  <arg name="eval_map_min_y" default="-6.0" />
+  <arg name="eval_map_min_z" default="-0.2" />
+  <arg name="eval_map_max_x" default="182.0" />
+  <arg name="eval_map_max_y" default="150.2" />
+  <arg name="eval_map_max_z" default="3.8" />
 
   <!-- Trajectory/Waypoint server -->
   <node pkg="waypoint_generator" name="waypoint_generator" type="waypoint_generator" output="screen">
@@ -60,27 +87,38 @@
     <remap from="/position_cmd" to="/planning/pos_cmd" />
   </node>
 
-  <!-- Exploration evaluation metrics -->
+  <!-- Exploration evaluation metrics (ground-truth pcd follows the map) -->
   <node pkg="epic_planner" name="exploration_evaluator" type="evaluate_exploration.py" output="screen">
     <param name="odom_topic" value="$(arg odom_topic)" />
     <param name="position_cmd_topic" value="/planning/pos_cmd" />
-    <param name="pcd_path" value="$(find map_generator)/resource/garage.pcd" />
+    <param name="pcd_path" value="$(find map_generator)/resource/$(arg map_name).pcd" />
     <param name="cell_size" value="0.4" />
-    <param name="map_min_x" value="-10.0" />
-    <param name="map_min_y" value="-6.0" />
-    <param name="map_min_z" value="-0.2" />
-    <param name="map_max_x" value="182.0" />
-    <param name="map_max_y" value="150.2" />
-    <param name="map_max_z" value="3.8" />
+    <param name="map_min_x" value="$(arg eval_map_min_x)" />
+    <param name="map_min_y" value="$(arg eval_map_min_y)" />
+    <param name="map_min_z" value="$(arg eval_map_min_z)" />
+    <param name="map_max_x" value="$(arg eval_map_max_x)" />
+    <param name="map_max_y" value="$(arg eval_map_max_y)" />
+    <param name="map_max_z" value="$(arg eval_map_max_z)" />
     <param name="output_dir" value="$(arg eval_output_dir)" />
     <param name="auto_shutdown" value="$(arg eval_auto_shutdown)" />
   </node>
 
-  <!-- Simulation environment (garage map with drone) -->
+  <!-- Simulation environment (selected map + sensor FOV) -->
   <include file="$(find mars_drone_sim)/launch/garage.launch">
+    <arg name="map_name" value="$(find map_generator)/resource/$(arg map_name).pcd" />
     <arg name="sensing_horizon" value="60.0" />
     <arg name="odom_publish_rate" value="$(arg odom_publish_rate)" />
     <arg name="sensing_rate" value="$(arg sensing_rate)" />
+    <!-- [feature: 120deg FOV sensing] -->
+    <arg name="lidar_yaw_fov" value="$(arg lidar_yaw_fov)" />
+    <arg name="lidar_vertical_fov" value="$(arg lidar_vertical_fov)" />
+    <arg name="lidar_is_360" value="$(arg lidar_is_360)" />
+    <arg name="lidar_pitch" value="$(arg lidar_pitch)" />
+    <!-- [feature: initial pose] -->
+    <arg name="init_x_" value="$(arg init_x)" />
+    <arg name="init_y_" value="$(arg init_y)" />
+    <arg name="init_z_" value="$(arg init_z)" />
+    <arg name="init_yaw" value="$(arg init_yaw)" />
   </include>
 
   <!-- RViz visualization -->

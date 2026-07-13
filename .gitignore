@@ -25,3 +25,8 @@ src/MARSIM/map_generator/resource/*.pcd
 src/EPIC/src/global_planner/exploration_manager/experiments/*/iter_*/
 src/EPIC/src/global_planner/exploration_manager/experiments/*/*.png
 src/EPIC/src/global_planner/exploration_manager/experiments/*/params.yaml
+
+# Large map files exceeding GitHub's 100MB limit (kept locally only)
+src/EPIC/src/MARSIM/map_generator/resource/bukang.pcd
+src/EPIC/src/MARSIM/map_generator/resource/daejun_rail.pcd
+src/EPIC/src/MARSIM/map_generator/resource/garage.pcd

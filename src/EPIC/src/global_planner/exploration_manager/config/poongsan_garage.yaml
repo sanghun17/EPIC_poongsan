@@ -1,8 +1,16 @@
 #topic param:
+# map2 = poongsan_garage, config1 = 360deg LiDAR.
+# Identical to garage.yaml EXCEPT box_0 (poongsan_garage is a smaller ~39x28m map).
+# box_0 / eval bounds auto-fitted from poongsan_garage.pcd extent
+#   X[-0.1, 38.9] Y[-9.6, 18.3] Z[-3.4, 12.2], floor plane at z~=0.
+#   VERIFY the start pose (5,0,2) is free and the z-band suits the site.
 odometry_topic: /quad_0/lidar_slam/odom_throttled
 cloud_topic: /quad0_pcl_render_node/cloud
 global_planning/w_vdir: 1.2
-global_planning/w_yawdir: 0.0
+# Weight on required yaw rotation when scoring viewpoints/tour. 0 = ignore
+# rotation; higher = prefer frontiers the robot is already heading toward
+# (less yaw thrashing).
+global_planning/w_yawdir: 0.5
 global_planning/w_firstnode: 0.2
 #viz
 view_graph: false
@@ -17,7 +25,7 @@ bubble_topo/init_region_size_x: 2.5
 bubble_topo/init_region_size_y: 2.5
 bubble_topo/init_region_size_z: 2.0
 bubble_topo/cube_discrete_size: 0.25
-bubble_topo/odom_node_distance: 5.0   # map1: keep original hardcoded odom-trail spacing
+bubble_topo/odom_node_distance: 1.0   # map2: dense odom-trail for narrow/twisty corridors
 bubble_astar/safe_distance: 0.6
 # map param
 max_update_region_num: 99999999
@@ -42,6 +50,12 @@ FrontierManager/cluster_min_size: 2.0
 FrontierManager/cluster_min_radius: 1.0 # DBSCAN 判断邻居的阈值
 FrontierManager/cluster_direction_radius: 0.15 # cos(theta) > cluster_direction_radius
 FrontierManager/cluster_minmum_point_num: 5
+# Retire a frontier once the robot has reached its best viewpoint (within
+# visit_retire_dist [m]) and is roughly facing it (heading within
+# visit_retire_yaw_deg) but the cells are STILL frontier -> the sensor can't
+# resolve them. Stops the robot circling unobservable frontiers.
+FrontierManager/visit_retire_dist: 0.6
+FrontierManager/visit_retire_yaw_deg: 60.0
 # 柱形采样
 # [corridor tuning] pillar sampling fitted to ~2m corridor (half-width 1m)
 ViewpointManager/sample_pillar_min_height: -0.3   # sample at/below the frontier height
@@ -53,24 +67,21 @@ ViewpointManager/sample_pillar_radius_layer_num: 3
 ViewpointManager/sample_pillar_circle_sample_num: 12  # finer azimuth for narrow space
 ViewpointManager/min_clearance: 0.45              # [extracted param] viewpoint clearance (was hardcoded 0.9)
 ViewpointManager/local_tsp_size: 20
-# area
+# area  [map2: poongsan_garage — fitted to cloud extent, NOT garage's 182x150 box]
 box_num: 1
-box_0/down: [-10.0, -6.0, -0.2]
-box_0/up: [182.0, 150.2, 3.8]
+box_0/down: [-2.0, -11.0, -0.2]
+box_0/up: [40.0, 20.0, 3.8]
 dead_area_num: 0
 # trajectory param
 max_traj_len: 10.0
 # --- Local SFC corridor clipping to the observed region (forward-FOV safety) ---
-# Injects observed-boundary (frontier) cells as pseudo-obstacles so the local
-# corridor closes at the edge of what the sensor has seen, and prepends a
-# robot-sized free box (P0) at the current pose as a seed.
 local_planning/clip_corridor_to_observed: true
-local_planning/p0_len_x: 0.6   # P0 body-x (fwd/back) full length; keep <= 2*DilateRadiusHard (=1.0)
-local_planning/p0_len_y: 0.6   # P0 body-y (left/right) full length
-local_planning/p0_up: 0.2      # P0 extent above the flight controller
-local_planning/p0_down: 0.2    # P0 extent below the flight controller
-local_planning/frontier_pt_dilate: 0.0  # reserved (Step 5); unused in Phase 1
-local_planning/viz_origin_corridor: true # DEBUG: also publish original (unclipped) corridor in orange; costs 1 extra convexCover/replan — turn off for production
+local_planning/p0_len_x: 0.6
+local_planning/p0_len_y: 0.6
+local_planning/p0_up: 0.2
+local_planning/p0_down: 0.2
+local_planning/frontier_pt_dilate: 0.0
+local_planning/viz_origin_corridor: true
 DilateRadiusSoft: 0.6 # minco threshold
 DilateRadiusHard: 0.5 # collision check threshold
 MaxCorridorSize: 3.5

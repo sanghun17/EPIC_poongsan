@@ -39,6 +39,10 @@ void FastExplorationManager::initialize(
   frontier_manager_ptr_ = frt_manager;
   planner_manager_ = planner_manager;
 
+  // Give the local planner a handle to the frontier manager so it can clip the
+  // local SFC corridor to the observed region (forward-FOV safety).
+  planner_manager_->frontier_manager_ = frt_manager;
+
   ed_.reset(new ExplorationData);
   ep_.reset(new ExplorationParam);
   ed_->next_goal_node_ = make_shared<TopoNode>();
@@ -118,13 +122,24 @@ double FastExplorationManager::getPathCost(TopoNode::Ptr &n1,
     //   planner_manager_->gcopter_config_->yaw_max_vel);
     // }
 
-    // if (path.size() >= 2) {
-    //   planner_manager_->calculateTimelb(path, yaw1, yaw2, yaw_cost);
-    //   yaw_cost *= ep_->w_yawdir_;
-    // }
+    // [feature: yaw-cost] penalize how much the robot must rotate to reach and
+    // face this node, so the tour prefers viewpoints it is roughly already
+    // heading toward instead of spinning ~180deg for every pick. Was disabled
+    // (and wouldn't compile: calculateTimelb wants Vector3d, path is Vector3f),
+    // so viewpoint selection ignored rotation entirely. w_yawdir scales it; 0
+    // restores the old length-only behavior (and skips the work).
+    if (path.size() >= 2 && ep_->w_yawdir_ > 0.0) {
+      vector<Eigen::Vector3d> path_d;
+      path_d.reserve(path.size());
+      for (auto &p : path)
+        path_d.emplace_back(p.cast<double>());
+      double yaw_lb = 0.0;
+      planner_manager_->calculateTimelb(path_d, (double)yaw1, (double)yaw2,
+                                        yaw_lb);
+      yaw_cost = ep_->w_yawdir_ * yaw_lb;
+    }
 
-    return len_cost + dir_cost;
-    // return len_cost + dir_cost;
+    return len_cost + dir_cost + yaw_cost;
   };
   vector<Eigen::Vector3f> path;
   
@@ -354,13 +369,16 @@ int FastExplorationManager::planGlobalPath(const Eigen::Vector3d &pos,
   // if ((end_tsp - start_tsp).toSec() * 1000 > 100)
   //   exit(0);
   ed_->global_tour_.clear();
+  vector<TopoNode::Ptr> tour_vps; // viewpoint at each tour stop (nullptr = odom)
 
   for (auto &i : indices) {
     if (i == 0) {
       ed_->global_tour_.push_back(
           planner_manager_->topo_graph_->odom_node_->center_);
+      tour_vps.push_back(nullptr);
     } else {
       ed_->global_tour_.emplace_back(viewpoint_reachable[i - 1]->center_);
+      tour_vps.push_back(viewpoint_reachable[i - 1]);
     }
   }
   if (!last_goal_reachable)
@@ -372,8 +390,7 @@ int FastExplorationManager::planGlobalPath(const Eigen::Vector3d &pos,
   // Visualize the tour
   planner_manager_->graph_visualizer_->vizTour(ed_->global_tour_, VizColor::BLUE, "global");
 
-  planner_manager_->local_data_.end_yaw_ =
-      viewpoint_reachable[indices[1] - 1]->yaw_;
+  planner_manager_->local_data_.end_yaw_ = tour_vps[1]->yaw_;
   updateGoalNode();
   return SUCCEED;
 }

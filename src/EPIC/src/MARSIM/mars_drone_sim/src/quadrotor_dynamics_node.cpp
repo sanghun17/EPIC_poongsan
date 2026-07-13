@@ -25,15 +25,19 @@ int main(int argc, char** argv)
 
     double init_x, init_y, init_z,mass;
     double simulation_rate;
+    double odom_publish_rate;
     std::string quad_name;
     n.param("mass", mass, 0.9);
     n.param("init_state_x", init_x, 0.0);
     n.param("init_state_y", init_y, 0.0);
     n.param("init_state_z", init_z, 1.0);
     n.param("simulation_rate", simulation_rate, 200.0);
+    n.param("odom_publish_rate", odom_publish_rate, 200.0);
     n.param("quadrotor_name", quad_name, std::string("quadrotor"));
+    double odom_publish_period = 1.0 / odom_publish_rate;
 
     ros::Publisher odom_pub = n.advertise<nav_msgs::Odometry>("odom", 100);
+    ros::Publisher odom_throttled_pub = n.advertise<nav_msgs::Odometry>("odom_throttled", 100);
     ros::Publisher imu_pub = n.advertise<sensor_msgs::Imu>("imu", 10);
     // ros::Subscriber cmd_sub = n.subscribe("cmd", 100, &cmd_callback, ros::TransportHints().tcpNoDelay());
     ros::Subscriber rpm_sub = n.subscribe("cmd_RPM", 100, RPMCallbck);
@@ -57,6 +61,7 @@ int main(int argc, char** argv)
     rate.sleep();
 
     ros::Time last_time = ros::Time::now();
+    ros::Time last_odom_throttled_pub_time = ros::Time::now();
     while(n.ok())
     {
         ros::spinOnce();
@@ -97,6 +102,13 @@ int main(int argc, char** argv)
         odom.twist.twist.angular.z = angular_vel_world(2);
         odom_pub.publish(odom);
 
+        // Publish throttled odom for planner at configurable rate
+        if ((now_time - last_odom_throttled_pub_time).toSec() >= odom_publish_period)
+        {
+            last_odom_throttled_pub_time = now_time;
+            odom_throttled_pub.publish(odom);
+        }
+
         ROS_INFO("Odom = %f,%f,%f, %f,%f,%f,%f",pos(0),pos(1),pos(2),quat(0),quat(1),quat(2),quat(3));
 
         //imu generate
@@ -120,5 +132,5 @@ int main(int argc, char** argv)
     }
 
     return 0;
-  
+
 }

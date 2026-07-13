@@ -1,10 +1,27 @@
 <launch>
 	<!-- main node -->
 	<arg name="config_file" default="cave2.yaml"/>
-	
+	<!-- rviz corridor(polytope) 가시화 on/off. roslaunch ... visualize_corridor:=false 로 끔 -->
+	<arg name="visualize_corridor" default="true"/>
+	<!-- [feature: 120deg FOV sensing] optional launch-time override of the LiDAR
+	     FOV model (default off -> values come from the config yaml). -->
+	<arg name="override_lidar_fov" default="false"/>
+	<arg name="lidar_yaw_fov" default="360.0"/>
+	<arg name="lidar_is_360" default="true"/>
+	<arg name="lidar_fov_up" default="90.0"/>
+	<arg name="lidar_fov_down" default="-90.0"/>
+
 	<node pkg="epic_planner" name="exploration_node" type="exploration_node"
 		output="screen">
 		<rosparam file="$(find epic_planner)/config/$(arg config_file)" command="load" />
+		<param name="visualize_corridor" value="$(arg visualize_corridor)" type="bool" />
+		<!-- [feature: 120deg FOV sensing] override cropped-LiDAR FOV params -->
+		<param if="$(arg override_lidar_fov)" name="lidar_perception/yaw_fov" value="$(arg lidar_yaw_fov)" type="double" />
+		<param if="$(arg override_lidar_fov)" name="lidar_perception/is_360lidar" value="$(eval arg('lidar_is_360') in ['true', 'True', '1'])" type="bool" />
+		<param if="$(arg override_lidar_fov)" name="lidar_perception/fov_up" value="$(arg lidar_fov_up)" type="double" />
+		<param if="$(arg override_lidar_fov)" name="lidar_perception/fov_down" value="$(arg lidar_fov_down)" type="double" />
+		<param if="$(arg override_lidar_fov)" name="lidar_perception/fov_viewpoint_up" value="$(arg lidar_fov_up)" type="double" />
+		<param if="$(arg override_lidar_fov)" name="lidar_perception/fov_viewpoint_down" value="$(arg lidar_fov_down)" type="double" />
 		<!-- Fsm -->
 		<param name="fsm/thresh_replan" value="0.5" type="double" />
 		<param name="fsm/emergency_replan_control_error" value="1.5" type="double" />

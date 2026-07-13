@@ -35,6 +35,11 @@ int add_boundary = 0;
 int is_bridge = 0;
 double downsample_res;
 double map_offset_x, map_offset_y, map_offset_z;
+// Optional coarse copy for RViz only: keeps the sensor-facing
+// /map_generator/global_cloud dense while giving the viewer a light cloud.
+// Empty viz_topic (default) disables it.
+string viz_topic;
+double viz_downsample_res;
 
 int minus_twopointcloud(pcl::PointCloud<pcl::PointXYZ> &cloud_input, pcl::PointCloud<pcl::PointXYZ> &cloud_input2, pcl::PointCloud<pcl::PointXYZ> &cloud_output)
 {
@@ -72,6 +77,14 @@ int main(int argc, char **argv)
   node.getParam("map_offset_z", map_offset_z);
 
   ros::Publisher cloud_pub = node.advertise<sensor_msgs::PointCloud2>("/map_generator/global_cloud", 10, true);
+
+  // Optional RViz-only coarse cloud (does not touch the dense sensor cloud).
+  node.param<string>("viz_topic", viz_topic, string(""));
+  node.param("viz_downsample_res", viz_downsample_res, 0.25);
+  ros::Publisher viz_pub;
+  if (!viz_topic.empty())
+    viz_pub = node.advertise<sensor_msgs::PointCloud2>(viz_topic, 1, true);
+
   file_name = argv[1];
 
   ros::Duration(1.0).sleep();
@@ -367,6 +380,20 @@ int main(int argc, char **argv)
   msg.header.frame_id = "world";
   ROS_INFO("Map point size = %d", cloud.points.size());
 
+  // Build the coarse RViz-only copy from the same dense cloud.
+  sensor_msgs::PointCloud2 viz_msg;
+  if (!viz_topic.empty())
+  {
+    pcl::PointCloud<pcl::PointXYZ> cloud_viz;
+    pcl::VoxelGrid<pcl::PointXYZ> viz_sampler;
+    viz_sampler.setLeafSize(viz_downsample_res, viz_downsample_res, viz_downsample_res);
+    viz_sampler.setInputCloud(cloud.makeShared());
+    viz_sampler.filter(cloud_viz);
+    pcl::toROSMsg(cloud_viz, viz_msg);
+    viz_msg.header.frame_id = "world";
+    ROS_INFO("Viz cloud (res=%.2f) point size = %d", viz_downsample_res, (int)cloud_viz.points.size());
+  }
+
   // write files
   //  std::string pkg_path("/home/jackykong/motionplanning/FUEL_ws/src/Exploration_sim/uav_simulator/map_generator/resource");
   //  std::string pcd_name("watertre03_cutoff");
@@ -395,6 +422,8 @@ int main(int argc, char **argv)
 
     ros::Duration(1.0).sleep();
     cloud_pub.publish(msg);
+    if (!viz_topic.empty())
+      viz_pub.publish(viz_msg);
     // minus_cloud_pub.publish(minus_msg);
     ++count;
     if (count > 10)

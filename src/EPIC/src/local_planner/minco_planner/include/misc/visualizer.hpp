@@ -33,6 +33,8 @@ private:
   ros::Publisher trajectoryPub;
   ros::Publisher meshPub;
   ros::Publisher edgePub;
+  ros::Publisher meshPubOrig; // original (unclipped) corridor overlay
+  ros::Publisher edgePubOrig;
   ros::Publisher spherePub;
   ros::Publisher PolysGenerate_timecostPub;
   ros::Publisher trajOptimize_timecostPub;
@@ -68,6 +70,8 @@ public:
     trajectoryPub = nh.advertise<visualization_msgs::Marker>("/visualizer/trajectory", 10);
     meshPub = nh.advertise<visualization_msgs::Marker>("/visualizer/mesh", 1000);
     edgePub = nh.advertise<visualization_msgs::Marker>("/visualizer/edge", 1000);
+    meshPubOrig = nh.advertise<visualization_msgs::Marker>("/visualizer/mesh_origin", 1000);
+    edgePubOrig = nh.advertise<visualization_msgs::Marker>("/visualizer/edge_origin", 1000);
     spherePub = nh.advertise<visualization_msgs::Marker>("/visualizer/spheres", 1000);
     speedPub = nh.advertise<std_msgs::Float64>("/visualizer/speed", 1000);
     thrPub = nh.advertise<std_msgs::Float64>("/visualizer/total_thrust", 1000);
@@ -235,7 +239,12 @@ public:
   }
 
   // Visualize some polytopes in H-representation
-  inline void visualizePolytope(const std::vector<Eigen::MatrixX4d> &hPolys, bool red_edge = false) {
+  // Core renderer: build triangle mesh + edges from an H-rep corridor and
+  // publish to the given topics with the given edge/mesh colors.
+  inline void renderPolytope(const std::vector<Eigen::MatrixX4d> &hPolys,
+                             ros::Publisher &meshPub_, ros::Publisher &edgePub_,
+                             double eR, double eG, double eB,
+                             double mR, double mG, double mB) {
     // Due to the fact that H-representation cannot be directly visualized
     // We first conduct vertex enumeration of them, then apply quickhull
     // to obtain triangle meshs of polyhedra
@@ -269,9 +278,9 @@ public:
     meshMarker.action = visualization_msgs::Marker::ADD;
     meshMarker.type = visualization_msgs::Marker::TRIANGLE_LIST;
     meshMarker.ns = "mesh";
-    meshMarker.color.r = 0.00;
-    meshMarker.color.g = 0.00;
-    meshMarker.color.b = 1.00;
+    meshMarker.color.r = mR;
+    meshMarker.color.g = mG;
+    meshMarker.color.b = mB;
     meshMarker.color.a = 0.07;
     meshMarker.scale.x = 1.0;
     meshMarker.scale.y = 1.0;
@@ -280,15 +289,9 @@ public:
     edgeMarker = meshMarker;
     edgeMarker.type = visualization_msgs::Marker::LINE_LIST;
     edgeMarker.ns = "edge";
-    if (red_edge) {
-      edgeMarker.color.r = 1.00;
-      edgeMarker.color.g = 0.00;
-    } else {
-      edgeMarker.color.r = 0.00;
-      edgeMarker.color.g = 1.00;
-    }
-
-    edgeMarker.color.b = 1.00;
+    edgeMarker.color.r = eR;
+    edgeMarker.color.g = eG;
+    edgeMarker.color.b = eB;
     edgeMarker.color.a = 0.20;
     edgeMarker.scale.x = 0.02;
 
@@ -316,10 +319,24 @@ public:
       }
     }
 
-    meshPub.publish(meshMarker);
-    edgePub.publish(edgeMarker);
+    meshPub_.publish(meshMarker);
+    edgePub_.publish(edgeMarker);
 
     return;
+  }
+
+  // Clipped corridor actually flown: green edges (red if broken), blue fill.
+  inline void visualizePolytope(const std::vector<Eigen::MatrixX4d> &hPolys, bool red_edge = false) {
+    const double eR = red_edge ? 1.00 : 0.00;
+    const double eG = red_edge ? 0.00 : 1.00;
+    renderPolytope(hPolys, meshPub, edgePub, eR, eG, 1.00, 0.00, 0.00, 1.00);
+  }
+
+  // Debug overlay: the ORIGINAL (unclipped, obstacle-only) corridor, drawn in
+  // orange on /visualizer/{mesh,edge}_origin so it can be compared side by side
+  // with the clipped corridor above.
+  inline void visualizePolytopeOrigin(const std::vector<Eigen::MatrixX4d> &hPolys) {
+    renderPolytope(hPolys, meshPubOrig, edgePubOrig, 1.00, 0.55, 0.00, 1.00, 0.55, 0.00);
   }
 
   // Visualize all spheres with centers sphs and the same radius
